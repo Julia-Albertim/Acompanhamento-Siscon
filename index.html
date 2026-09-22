@@ -57,23 +57,45 @@
     padding:12px 20px;border-radius:10px;cursor:pointer;white-space:nowrap;}
   .btn-upload-big:hover{background:var(--azul-escuro);}
 
-  .filters{background:var(--card);border:1px solid var(--borda);border-radius:12px;padding:14px 18px;
-    margin-bottom:18px;display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;}
-  .filter-group{min-width:150px;max-width:290px;}
-  .filter-group h4{margin:0 0 7px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--texto-suave);}
-  .chip-row{display:flex;flex-wrap:wrap;gap:5px;max-height:84px;overflow-y:auto;padding-right:4px;}
+  .filters{background:var(--card);border:1px solid var(--borda);border-radius:12px;
+    margin-bottom:18px;overflow:hidden;}
+  .filters-head{display:flex;align-items:center;gap:12px;padding:12px 18px;flex-wrap:wrap;}
+  .filters-head-left{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1;min-width:0;}
+  .filters-toggle{background:none;border:1px solid var(--borda);color:var(--azul-escuro);font-weight:700;
+    font-size:12.5px;padding:7px 13px;border-radius:20px;cursor:pointer;white-space:nowrap;display:flex;
+    align-items:center;gap:6px;}
+  .filters-toggle:hover{border-color:var(--azul);}
+  .filters-toggle .chev{transition:transform .15s;font-size:10px;}
+  .filters-toggle.open .chev{transform:rotate(180deg);}
+  .filters-toggle .cnt{background:var(--azul);color:#fff;font-size:10.5px;font-weight:700;
+    padding:1px 7px;border-radius:10px;min-width:16px;text-align:center;}
+  .filters-summary{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0;}
+  .filters-summary-empty{font-size:12.5px;color:var(--texto-suave);}
+  .mini-chip{background:#EAF0FC;color:var(--azul-escuro);font-size:11.5px;font-weight:600;
+    padding:4px 6px 4px 11px;border-radius:14px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;}
+  .mini-chip button{background:none;border:none;color:var(--azul-escuro);opacity:.6;cursor:pointer;
+    font-size:13px;line-height:1;padding:0 3px;border-radius:50%;}
+  .mini-chip button:hover{opacity:1;background:rgba(47,74,151,.15);}
+  .filters .clear{font-size:12.5px;color:var(--azul);background:none;border:1px solid var(--azul);
+    padding:7px 14px;border-radius:20px;cursor:pointer;font-weight:600;white-space:nowrap;}
+  .filters .clear:hover{background:var(--azul);color:#fff;}
+
+  .filters-body{display:none;grid-template-columns:repeat(auto-fill,minmax(172px,1fr));
+    gap:18px 24px;padding:14px 18px 16px;border-top:1px solid var(--borda);}
+  .filters-body.open{display:grid;}
+  .filter-group h4{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;
+    color:var(--texto-suave);display:flex;align-items:center;gap:6px;}
+  .filter-group h4 .cnt{background:var(--azul);color:#fff;font-size:9.5px;font-weight:700;
+    padding:1px 6px;border-radius:9px;}
+  .chip-row{display:flex;flex-wrap:wrap;gap:6px;max-height:104px;overflow-y:auto;padding-right:4px;}
   .chip-row::-webkit-scrollbar{width:6px;}
   .chip-row::-webkit-scrollbar-thumb{background:var(--borda);border-radius:4px;}
-  .chip{padding:4px 10px;border-radius:20px;border:1px solid var(--borda);font-size:12px;cursor:pointer;
+  .chip{padding:4px 11px;border-radius:20px;border:1px solid var(--borda);font-size:12px;cursor:pointer;
     background:#fff;user-select:none;transition:all .12s;white-space:nowrap;}
   .chip:hover{border-color:var(--azul-claro);}
   .chip.active{background:var(--azul);border-color:var(--azul);color:#fff;}
-  .filters .clear{align-self:center;margin-left:auto;font-size:12.5px;color:var(--azul);background:none;
-    border:1px solid var(--azul);padding:7px 14px;border-radius:20px;cursor:pointer;font-weight:600;}
-  .filters .clear:hover{background:var(--azul);color:#fff;}
 
-  .kpis{display:grid;grid-template-columns:repeat(7,1fr);gap:12px;margin-bottom:20px;}
-  @media(max-width:1250px){.kpis{grid-template-columns:repeat(4,1fr);}}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px;}
   @media(max-width:720px){.kpis{grid-template-columns:repeat(2,1fr);}}
   .kpi{background:var(--card);border:1px solid var(--borda);border-radius:12px;padding:15px 15px 13px;border-top:4px solid var(--azul);}
   .kpi .num{font-size:24px;font-weight:700;color:var(--azul-escuro);}
@@ -201,7 +223,7 @@
       </div>
       <div class="card">
         <h3>Prioridade</h3>
-        <p class="hint">Escala registrada no sistema (1 = Menos urgente | 6 = Não se aplica)</p>
+        <p class="hint">Escala registrada no sistema</p>
         <canvas id="chPrioridade"></canvas>
       </div>
     </div>
@@ -281,7 +303,8 @@
     <div class="nota">
       Cálculo usado: o prazo considerado é o <b>Prazo SLA</b> (quando vazio, cai para o <b>Prazo entrega</b>).
       Para chamados encerrados compara-se a <b>Última Alteração</b> com o prazo; para os que seguem abertos,
-      compara-se com a data de hoje.
+      compara-se com a data de hoje. "Vencendo em breve" = ainda dentro do prazo, mas faltam
+      <span id="notaDiasVencendo">5</span> dias ou menos.
     </div>
     <div class="grid c2">
       <div class="card tall">
@@ -307,12 +330,17 @@
         <canvas id="chTempoMedio"></canvas>
       </div>
     </div>
+    <div class="card" style="margin-bottom:15px;">
+      <h3>Vencendo em Breve</h3>
+      <p class="hint">Ainda dentro do prazo, mas perto de estourar — ordenado do mais urgente</p>
+      <div class="table-wrap"><table id="tblVencendo"><thead></thead><tbody></tbody></table></div>
+    </div>
     <div class="card">
       <h3>Chamados em Atraso</h3>
       <div class="table-wrap"><table id="tblAtraso"><thead></thead><tbody></tbody></table></div>
     </div>
   </div>
-
+no
   <!-- ===== BASE ===== -->
   <div class="tab-panel" id="tab-base">
     <div class="card">
@@ -326,7 +354,7 @@
   </div>
 </main>
 
-<footer>Dashboard gerado a partir do export "Solicitações" do SISCON · CompesaPrev</footer>
+<footer>Dashboard gerado a partir do "Solicitações.xlsx" extraído do SISCON · CTI | CompesaPrev</footer>
 
 <script>
 // ============================================================
@@ -344,6 +372,13 @@ const COL = {
 // Situações que contam como encerradas
 const CONCLUIDAS = ['liberado para cliente','resolvido','faturado'];
 const CANCELADAS = ['cancelado'];
+
+// Nomes das prioridades do SISCON 
+const PRIORIDADE_LABELS = {'1':'Mínima','2':'Baixa','3':'Normal','4':'Alta','5':'Máxima','6':'Sem prazo'};
+
+// A partir de quantos dias (contando hoje) um chamado em aberto entra
+// na categoria "vencendo em breve"
+const DIAS_VENCENDO_EM_BREVE = 2;
 
 // Apelidos de pessoas — o SISCON grava a mesma pessoa de formas
 // diferentes. Só preencha se o ajuste automático não pegar alguém.
@@ -469,6 +504,11 @@ function grupoSituacao(s){
   if(CANCELADAS.includes(k)) return 'Cancelado';
   return 'Em andamento';
 }
+function prioridadeLabel(v){
+  if(v===null||v===undefined||(''+v).trim()==='') return '—';
+  const k=(''+v).trim();
+  return PRIORIDADE_LABELS[k] ? (k+' - '+PRIORIDADE_LABELS[k]) : k;
+}
 
 // ============ interpretação da planilha ============
 function interpretRows(matrix){
@@ -504,6 +544,10 @@ function interpretRows(matrix){
     else if(encerrado) sla=(refFim<=prazo)?'Concluído no prazo':'Concluído com atraso';
     else sla=(HOJE<=prazo)?'Dentro do prazo':'Atrasado';
 
+    const diasParaVencer = (!encerrado && prazo) ? diffDias(HOJE,prazo) : null;
+    const vencendoEmBreve = (sla==='Dentro do prazo' && diasParaVencer!==null &&
+      diasParaVencer>=0 && diasParaVencer<=DIAS_VENCENDO_EM_BREVE);
+
     out.push({
       protocolo:r[COL.protocolo],
       solicitante:nome(r[COL.solicitante]),
@@ -514,29 +558,33 @@ function interpretRows(matrix){
       resumo:(r[COL.resumo]||'').toString().trim(),
       situacao, grupo,
       fila:(r[COL.fila]||'—').toString().trim(),
-      prioridade:(r[COL.prioridade]===null||r[COL.prioridade]===undefined)?'—':(''+r[COL.prioridade]).trim(),
+      prioridade:prioridadeLabel(r[COL.prioridade]),
       dataInclusao:ymd(dataInclusao), mesInclusao:ym(dataInclusao),
       ultimaAlteracao:ymd(ultimaAlt), prazo:ymd(prazo),
       encerrado, sla,
       diasEmAberto: dataInclusao?diffDias(dataInclusao,refFim):null,
       diasAtraso:(prazo&&refFim>prazo)?diffDias(prazo,refFim):0,
-      diasResolucao:(encerrado&&dataInclusao&&dataFim)?diffDias(dataInclusao,dataFim):null
+      diasResolucao:(encerrado&&dataInclusao&&dataFim)?diffDias(dataInclusao,dataFim):null,
+      diasParaVencer,
+      vencimento: vencendoEmBreve ? 'Vencendo em breve' : null
     });
   }
   return out;
 }
 
 // ============ filtros ============
-const FIELDS=['sistema','modulo','classificacao','grupo','situacao','solicitante','fila','prioridade','sla'];
+const FIELDS=['sistema','modulo','classificacao','grupo','situacao','solicitante','prioridade','sla','vencimento'];
 const FIELD_LABELS={sistema:'Sistema',modulo:'Módulo',classificacao:'Classificação',grupo:'Andamento',
-  situacao:'Situação',solicitante:'Solicitante',fila:'Fila atual',prioridade:'Prioridade',sla:'Prazo'};
+  situacao:'Situação',solicitante:'Solicitante',prioridade:'Prioridade',sla:'Prazo',vencimento:'Vencimento'};
 let filters={}; FIELDS.forEach(f=>filters[f]=new Set());
+let dateFrom=null, dateTo=null; // filtro de período (data de inclusão), formato YYYY-MM-DD
+let filtersOpen=false;
 
 function uniqueValues(field){
   const counts={};
   RAW_DATA.forEach(d=>{ const v=d[field]; if(v!==null&&v!==undefined) counts[v]=(counts[v]||0)+1; });
   let vals=Object.keys(counts);
-  if(field==='prioridade') vals.sort((a,b)=>(+a||99)-(+b||99));
+  if(field==='prioridade') vals.sort((a,b)=>(parseInt(a)||99)-(parseInt(b)||99));
   else if(field==='sla') vals.sort((a,b)=>SLA_ORDER.indexOf(a)-SLA_ORDER.indexOf(b));
   else vals.sort((a,b)=>counts[b]-counts[a]);
   return vals;
@@ -545,17 +593,102 @@ function toggleFilter(field,value){
   filters[field].has(value)?filters[field].delete(value):filters[field].add(value);
   renderAll();
 }
-function clearFilters(){ FIELDS.forEach(f=>filters[f].clear()); renderAll(); }
-function getFilteredData(){
-  return RAW_DATA.filter(d=>FIELDS.every(f=>filters[f].size===0||filters[f].has(d[f])));
+function setDateRange(from,to){ dateFrom=from||null; dateTo=to||null; renderAll(); }
+function countActiveFilters(){
+  let n=FIELDS.reduce((a,f)=>a+filters[f].size,0);
+  if(dateFrom) n++;
+  if(dateTo) n++;
+  return n;
 }
+function clearFilters(){
+  FIELDS.forEach(f=>filters[f].clear());
+  dateFrom=null; dateTo=null;
+  renderAll();
+}
+function getFilteredData(){
+  return RAW_DATA.filter(d=>{
+    if(!FIELDS.every(f=>filters[f].size===0||filters[f].has(d[f]))) return false;
+    if(dateFrom && (!d.dataInclusao || d.dataInclusao<dateFrom)) return false;
+    if(dateTo && (!d.dataInclusao || d.dataInclusao>dateTo)) return false;
+    return true;
+  });
+}
+
 function buildFilterPanel(){
-  const panel=document.getElementById('filterPanel'); panel.innerHTML='';
+  const panel=document.getElementById('filterPanel');
+  panel.innerHTML='';
+
+  // ---- cabeçalho: toggle + resumo do que está ativo + limpar ----
+  const head=document.createElement('div'); head.className='filters-head';
+
+  const left=document.createElement('div'); left.className='filters-head-left';
+  const toggle=document.createElement('button');
+  const nAtivos=countActiveFilters();
+  toggle.className='filters-toggle'+(filtersOpen?' open':'');
+  toggle.innerHTML='🔍 Filtros'+(nAtivos?` <span class="cnt">${nAtivos}</span>`:'')+' <span class="chev">▾</span>';
+  toggle.onclick=()=>{ filtersOpen=!filtersOpen; buildFilterPanel(); };
+  left.appendChild(toggle);
+
+  const summary=document.createElement('div'); summary.className='filters-summary';
+  if(nAtivos===0){
+    const e=document.createElement('span'); e.className='filters-summary-empty';
+    e.textContent='Nenhum filtro ativo — mostrando tudo';
+    summary.appendChild(e);
+  } else {
+    FIELDS.forEach(field=>{
+      filters[field].forEach(val=>{
+        const chip=document.createElement('span'); chip.className='mini-chip';
+        chip.innerHTML=`${esc(val)}`;
+        const x=document.createElement('button'); x.textContent='✕'; x.title='Remover filtro';
+        x.onclick=()=>toggleFilter(field,val);
+        chip.appendChild(x);
+        summary.appendChild(chip);
+      });
+    });
+    if(dateFrom||dateTo){
+      const chip=document.createElement('span'); chip.className='mini-chip';
+      chip.innerHTML='Período: '+(dateFrom?fmtDate(dateFrom):'início')+' – '+(dateTo?fmtDate(dateTo):'hoje');
+      const x=document.createElement('button'); x.textContent='✕'; x.title='Remover filtro de período';
+      x.onclick=()=>setDateRange(null,null);
+      chip.appendChild(x);
+      summary.appendChild(chip);
+    }
+  }
+  left.appendChild(summary);
+  head.appendChild(left);
+
+  if(nAtivos>0){
+    const clearBtn=document.createElement('button'); clearBtn.className='clear'; clearBtn.textContent='Limpar filtros';
+    clearBtn.onclick=clearFilters;
+    head.appendChild(clearBtn);
+  }
+  panel.appendChild(head);
+
+  // ---- corpo: grid de filtros (só quando aberto) ----
+  const body=document.createElement('div'); body.className='filters-body'+(filtersOpen?' open':'');
+
+  // filtro de período, sempre primeiro
+  const gPeriodo=document.createElement('div'); gPeriodo.className='filter-group';
+  gPeriodo.innerHTML=`<h4>Período (abertura)</h4>`;
+  const wrapDatas=document.createElement('div');
+  wrapDatas.style.cssText='display:flex;flex-direction:column;gap:6px;';
+  wrapDatas.innerHTML=`
+    <label style="font-size:11px;color:var(--texto-suave);">De
+      <input type="date" id="dateFromInput" style="width:100%;margin-top:2px;padding:5px 7px;border:1px solid var(--borda);border-radius:7px;font-size:12.5px;">
+    </label>
+    <label style="font-size:11px;color:var(--texto-suave);">Até
+      <input type="date" id="dateToInput" style="width:100%;margin-top:2px;padding:5px 7px;border:1px solid var(--borda);border-radius:7px;font-size:12.5px;">
+    </label>`;
+  gPeriodo.appendChild(wrapDatas);
+  body.appendChild(gPeriodo);
+
   FIELDS.forEach(field=>{
     const vals=uniqueValues(field);
     if(!vals.length) return;
     const g=document.createElement('div'); g.className='filter-group';
-    const h=document.createElement('h4'); h.textContent=FIELD_LABELS[field]; g.appendChild(h);
+    const h=document.createElement('h4');
+    h.innerHTML=FIELD_LABELS[field]+(filters[field].size?` <span class="cnt">${filters[field].size}</span>`:'');
+    g.appendChild(h);
     const row=document.createElement('div'); row.className='chip-row';
     vals.forEach(val=>{
       const c=document.createElement('div');
@@ -564,10 +697,17 @@ function buildFilterPanel(){
       c.onclick=()=>toggleFilter(field,val);
       row.appendChild(c);
     });
-    g.appendChild(row); panel.appendChild(g);
+    g.appendChild(row); body.appendChild(g);
   });
-  const b=document.createElement('button'); b.className='clear'; b.textContent='Limpar filtros';
-  b.onclick=clearFilters; panel.appendChild(b);
+
+  panel.appendChild(body);
+
+  if(filtersOpen){
+    document.getElementById('dateFromInput').value=dateFrom||'';
+    document.getElementById('dateToInput').value=dateTo||'';
+    document.getElementById('dateFromInput').onchange=e=>setDateRange(e.target.value,dateTo);
+    document.getElementById('dateToInput').onchange=e=>setDateRange(dateFrom,e.target.value);
+  }
 }
 
 // ============ agregação ============
@@ -658,9 +798,9 @@ function renderCharts(data){
       scales:{...OPT_BARH.scales,y:{ticks:{callback:function(v){return shortLabel(this.getLabelForValue(v),24);}}}}}});
 
   const pri=countBy(data,'prioridade');
-  const priL=Object.keys(pri).sort((a,b)=>(+a||99)-(+b||99));
+  const priL=Object.keys(pri).sort((a,b)=>(parseInt(a)||99)-(parseInt(b)||99));
   drawChart('prioridade','chPrioridade',{type:'bar',
-    data:{labels:priL.map(p=>'Prioridade '+p),datasets:[{data:priL.map(p=>pri[p]),
+    data:{labels:priL,datasets:[{data:priL.map(p=>pri[p]),
       backgroundColor:priL.map((p,i)=>PALETA[i%PALETA.length]),borderRadius:5}]},
     options:{...OPT_BAR,onClick:(e,els,ch)=>{ if(els.length) toggleFilter('prioridade',priL[els[0].index]); }}});
 
@@ -702,7 +842,7 @@ function renderCharts(data){
   drawChart('fila','chFila',{type:'doughnut',
     data:{labels:filaL,datasets:[{data:filaL.map(l=>fila[l]),
       backgroundColor:filaL.map((l,i)=>PALETA[i%PALETA.length])}]},
-    options:{...OPT_DONUT,onClick:clickFilter('fila')}});
+    options:OPT_DONUT});
 
   const sso=stackedFrom(data,'solicitante','sistema',null,10);
   drawChart('solicitanteSistema','chSolicitanteSistema',{type:'bar',data:sso,
@@ -761,6 +901,7 @@ function renderKpis(data){
   const concluidas=data.filter(d=>d.grupo==='Concluído').length;
   const canceladas=data.filter(d=>d.grupo==='Cancelado').length;
   const atrasados=data.filter(d=>d.sla==='Atrasado').length;
+  const vencendo=data.filter(d=>d.vencimento==='Vencendo em breve').length;
   const comPrazo=data.filter(d=>d.sla!=='Sem prazo');
   const noPrazo=comPrazo.filter(d=>d.sla==='Dentro do prazo'||d.sla==='Concluído no prazo').length;
   const pctSla=comPrazo.length?Math.round(noPrazo/comPrazo.length*100):0;
@@ -772,6 +913,7 @@ function renderKpis(data){
     {n:andamento,l:'Em Andamento',c:'warn'},
     {n:concluidas,l:'Concluídas',c:'ok'},
     {n:atrasados,l:'Abertas em Atraso',c:'bad'},
+    {n:vencendo,l:`Vencendo em Breve (${DIAS_VENCENDO_EM_BREVE}d)`,c:'warn'},
     {n:pctSla+'%',l:'Prazo Cumprido',c:'info'},
     {n:tmed+'d',l:'Tempo Médio de Resolução',c:'info'},
     {n:canceladas,l:'Canceladas',c:'neutro'}
@@ -837,6 +979,15 @@ function renderTables(data){
         <td>${sub.filter(d=>d.sla==='Atrasado').length}</td>
         <td>${top?esc(top[0])+' ('+top[1]+')':'—'}</td></tr>`;
     }).join(''),6);
+
+  // vencendo em breve
+  const venc=data.filter(d=>d.vencimento==='Vencendo em breve').sort((a,b)=>a.diasParaVencer-b.diasParaVencer);
+  fillTable('tblVencendo',
+    `<tr><th>Protocolo</th><th>Sistema</th><th>Módulo</th><th>Resumo</th><th>Solicitante</th><th>Prioridade</th><th>Prazo</th><th>Dias restantes</th></tr>`,
+    venc.map(d=>`<tr><td>${esc(d.protocolo)}</td><td>${esc(d.sistema)}</td><td>${esc(d.modulo)}</td>
+      <td style="max-width:300px">${esc(d.resumo)}</td><td>${esc(d.solicitante)}</td>
+      <td>${esc(d.prioridade)}</td><td>${fmtDate(d.prazo)}</td>
+      <td><b style="color:var(--amarelo)">${d.diasParaVencer===0?'hoje':d.diasParaVencer+' d'}</b></td></tr>`).join(''),8);
 
   // atrasos
   const atr=data.filter(d=>d.diasAtraso>0).sort((a,b)=>b.diasAtraso-a.diasAtraso);
@@ -983,6 +1134,8 @@ document.getElementById('btnCsv').addEventListener('click',exportCsv);
 document.getElementById('btnRefresh').addEventListener('click',tryAutoLoad);
 wireFileInput(document.getElementById('fileInput'));
 wireFileInput(document.getElementById('fileInputBig'));
+
+document.getElementById('notaDiasVencendo').textContent = DIAS_VENCENDO_EM_BREVE;
 
 if(typeof Chart==='undefined'||typeof XLSX==='undefined'){
   showEmptyBanner('As bibliotecas do painel não carregaram',
