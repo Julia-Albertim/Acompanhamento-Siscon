@@ -223,7 +223,7 @@
       </div>
       <div class="card">
         <h3>Prioridade</h3>
-        <p class="hint">Escala registrada no sistema</p>
+        <p class="hint">Escala registrada no sistema (1 = mais urgente)</p>
         <canvas id="chPrioridade"></canvas>
       </div>
     </div>
@@ -313,8 +313,8 @@
         <canvas id="chDiasAberto"></canvas>
       </div>
       <div class="card tall">
-        <h3>Maiores Atrasos</h3>
-        <p class="hint">Top 15 por dias ultrapassados do prazo</p>
+        <h3>Maiores Atrasos (Ainda Abertos)</h3>
+        <p class="hint">Top 15 chamados que continuam pendentes e já passaram do prazo</p>
         <canvas id="chAtraso"></canvas>
       </div>
     </div>
@@ -335,12 +335,18 @@
       <p class="hint">Ainda dentro do prazo, mas perto de estourar — ordenado do mais urgente</p>
       <div class="table-wrap"><table id="tblVencendo"><thead></thead><tbody></tbody></table></div>
     </div>
-    <div class="card">
-      <h3>Chamados em Atraso</h3>
+    <div class="card" style="margin-bottom:15px;">
+      <h3>Chamados Atualmente em Atraso</h3>
+      <p class="hint">Ainda em andamento e já passaram do prazo — precisam de atenção agora</p>
       <div class="table-wrap"><table id="tblAtraso"><thead></thead><tbody></tbody></table></div>
     </div>
+    <div class="card">
+      <h3>Concluídos com Atraso (histórico)</h3>
+      <p class="hint">Já foram resolvidos/liberados — não estão mais em atraso, só ficaram registrados que passaram do prazo na época</p>
+      <div class="table-wrap"><table id="tblConcluidoAtraso"><thead></thead><tbody></tbody></table></div>
+    </div>
   </div>
-no
+
   <!-- ===== BASE ===== -->
   <div class="tab-panel" id="tab-base">
     <div class="card">
@@ -354,7 +360,7 @@ no
   </div>
 </main>
 
-<footer>Dashboard gerado a partir do "Solicitações.xlsx" extraído do SISCON · CTI | CompesaPrev</footer>
+<footer>Dashboard gerado a partir do export "Solicitações" do SISCON · CompesaPrev</footer>
 
 <script>
 // ============================================================
@@ -372,13 +378,16 @@ const COL = {
 // Situações que contam como encerradas
 const CONCLUIDAS = ['liberado para cliente','resolvido','faturado'];
 const CANCELADAS = ['cancelado'];
+// valores da coluna "Fila" (Responsável no SISCON) que também indicam finalizado,
+// mesmo quando a Situação ainda não foi atualizada
+const CONCLUIDAS_FILA = ['resolvido'];
 
-// Nomes das prioridades do SISCON 
-const PRIORIDADE_LABELS = {'1':'Mínima','2':'Baixa','3':'Normal','4':'Alta','5':'Máxima','6':'Sem prazo'};
+// Nomes das prioridades do SISCON (1 é a mais urgente)
+const PRIORIDADE_LABELS = {'1':'Mínima','2':'Baixa','3':'Normal','4':'Alta','5':'Máxima','6':'Não se aplica'};
 
 // A partir de quantos dias (contando hoje) um chamado em aberto entra
 // na categoria "vencendo em breve"
-const DIAS_VENCENDO_EM_BREVE = 2;
+const DIAS_VENCENDO_EM_BREVE = 5;
 
 // Apelidos de pessoas — o SISCON grava a mesma pessoa de formas
 // diferentes. Só preencha se o ajuste automático não pegar alguém.
@@ -498,10 +507,13 @@ function fmtMes(ymStr){
   const [y,m]=ymStr.split('-');
   return ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'][+m-1]+'/'+y.slice(2);
 }
-function grupoSituacao(s){
-  const k=labelKey(s||'');
-  if(CONCLUIDAS.includes(k)) return 'Concluído';
-  if(CANCELADAS.includes(k)) return 'Cancelado';
+function grupoSituacao(situacao, fila){
+  const ks=labelKey(situacao||'');
+  const kf=labelKey(fila||'');
+  // se qualquer um dos dois já indica finalizado/cancelado, considera finalizado —
+  // a situação às vezes fica desatualizada mas a fila (Responsável) já mostra Resolvido
+  if(CANCELADAS.includes(ks) || CANCELADAS.includes(kf)) return 'Cancelado';
+  if(CONCLUIDAS.includes(ks) || CONCLUIDAS_FILA.includes(kf)) return 'Concluído';
   return 'Em andamento';
 }
 function prioridadeLabel(v){
@@ -534,7 +546,8 @@ function interpretRows(matrix){
     const ultimaAlt=toDate(r[COL.ultimaAlteracao]);
     const prazo=toDate(r[COL.prazoSla])||toDate(r[COL.prazoEntrega]);
     const situacao=(r[COL.situacao]||'—').toString().trim()||'—';
-    const grupo=grupoSituacao(situacao);
+    const filaRaw=(r[COL.fila]||'—').toString().trim()||'—';
+    const grupo=grupoSituacao(situacao, filaRaw);
     const encerrado=(grupo==='Concluído'||grupo==='Cancelado');
     const dataFim=encerrado?ultimaAlt:null;
     const refFim=dataFim||HOJE;
@@ -557,7 +570,7 @@ function interpretRows(matrix){
       modulo:applyCanonical(mapModulo,normalizeLabel(r[COL.modulo])),
       resumo:(r[COL.resumo]||'').toString().trim(),
       situacao, grupo,
-      fila:(r[COL.fila]||'—').toString().trim(),
+      fila:filaRaw,
       prioridade:prioridadeLabel(r[COL.prioridade]),
       dataInclusao:ymd(dataInclusao), mesInclusao:ym(dataInclusao),
       ultimaAlteracao:ymd(ultimaAlt), prazo:ymd(prazo),
@@ -859,11 +872,10 @@ function renderCharts(data){
     options:{...OPT_BARH,plugins:{legend:{display:false},tooltip:{callbacks:{
       afterLabel:c=>abertos[c.dataIndex]?shortLabel(abertos[c.dataIndex].resumo,70):''}}}}});
 
-  const atrasados=data.filter(d=>d.diasAtraso>0).sort((a,b)=>b.diasAtraso-a.diasAtraso).slice(0,15);
+  const atrasados=data.filter(d=>d.sla==='Atrasado').sort((a,b)=>b.diasAtraso-a.diasAtraso).slice(0,15);
   drawChart('atraso','chAtraso',{type:'bar',
     data:{labels:atrasados.map(a=>a.protocolo+' · '+shortLabel(a.sistema,8)),
-      datasets:[{data:atrasados.map(a=>a.diasAtraso),
-        backgroundColor:atrasados.map(a=>a.encerrado?COLORS.laranja:COLORS.vermelho),borderRadius:4}]},
+      datasets:[{data:atrasados.map(a=>a.diasAtraso),backgroundColor:COLORS.vermelho,borderRadius:4}]},
     options:{...OPT_BARH,plugins:{legend:{display:false},tooltip:{callbacks:{
       afterLabel:c=>atrasados[c.dataIndex]?shortLabel(atrasados[c.dataIndex].resumo,70):''}}}}});
 
@@ -989,14 +1001,23 @@ function renderTables(data){
       <td>${esc(d.prioridade)}</td><td>${fmtDate(d.prazo)}</td>
       <td><b style="color:var(--amarelo)">${d.diasParaVencer===0?'hoje':d.diasParaVencer+' d'}</b></td></tr>`).join(''),8);
 
-  // atrasos
-  const atr=data.filter(d=>d.diasAtraso>0).sort((a,b)=>b.diasAtraso-a.diasAtraso);
+  // atualmente em atraso: ainda abertos, já passaram do prazo
+  const atr=data.filter(d=>d.sla==='Atrasado').sort((a,b)=>b.diasAtraso-a.diasAtraso);
   fillTable('tblAtraso',
     `<tr><th>Protocolo</th><th>Sistema</th><th>Módulo</th><th>Resumo</th><th>Solicitante</th><th>Situação</th><th>Prazo</th><th>Dias de atraso</th></tr>`,
     atr.map(d=>`<tr><td>${esc(d.protocolo)}</td><td>${esc(d.sistema)}</td><td>${esc(d.modulo)}</td>
       <td style="max-width:300px">${esc(d.resumo)}</td><td>${esc(d.solicitante)}</td>
       <td>${esc(d.situacao)}</td><td>${fmtDate(d.prazo)}</td>
-      <td><b style="color:${d.encerrado?'var(--amarelo)':'var(--vermelho)'}">${d.diasAtraso}</b></td></tr>`).join(''),8);
+      <td><b style="color:var(--vermelho)">${d.diasAtraso}</b></td></tr>`).join(''),8);
+
+  // histórico: já concluídos, mas passaram do prazo na época — não estão mais em atraso
+  const concAtr=data.filter(d=>d.sla==='Concluído com atraso').sort((a,b)=>b.diasAtraso-a.diasAtraso);
+  fillTable('tblConcluidoAtraso',
+    `<tr><th>Protocolo</th><th>Sistema</th><th>Módulo</th><th>Resumo</th><th>Solicitante</th><th>Situação</th><th>Prazo</th><th>Concluído em</th><th>Dias de atraso na conclusão</th></tr>`,
+    concAtr.map(d=>`<tr><td>${esc(d.protocolo)}</td><td>${esc(d.sistema)}</td><td>${esc(d.modulo)}</td>
+      <td style="max-width:280px">${esc(d.resumo)}</td><td>${esc(d.solicitante)}</td>
+      <td>${esc(d.situacao)}</td><td>${fmtDate(d.prazo)}</td><td>${fmtDate(d.ultimaAlteracao)}</td>
+      <td><b style="color:var(--amarelo)">${d.diasAtraso}</b></td></tr>`).join(''),9);
 
   renderTableBase(data);
 }
@@ -1062,7 +1083,7 @@ function showEmptyBanner(title,text,isError){
 }
 function hideEmptyBanner(){ document.getElementById('emptyBanner').style.display='none'; }
 
-function loadFromArrayBuffer(buf,sourceLabel){
+function loadFromArrayBuffer(buf,sourceLabel,doGit){
   try{
     const wb=XLSX.read(buf,{type:'array',cellDates:true});
     console.log('[dashboard] abas:',wb.SheetNames);
@@ -1079,12 +1100,47 @@ function loadFromArrayBuffer(buf,sourceLabel){
     RAW_DATA=parsed;
     clearFilters();
     hideEmptyBanner();
-    const now=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-    setStatus(`✅ ${parsed.length} solicitações carregadas de "${sourceLabel}" às ${now}`,'ok');
+    if(doGit) atualizarStatusComDataGit(parsed.length,sourceLabel);
+    else setStatus(`✅ ${parsed.length} solicitações carregadas de "${sourceLabel}"`,'ok');
   }catch(err){
     console.error('[dashboard] erro ao ler:',err);
     setStatus('Erro ao ler o arquivo: '+err.message,'err');
     showEmptyBanner('Não consegui ler esse arquivo','Detalhe técnico: '+err.message+'. Confira se é um .xlsx válido.',true);
+  }
+}
+
+// Detecta owner/repo a partir da própria URL quando publicado no GitHub
+// Pages (ex: julia-albertim.github.io/Acompanhamento-Siscon/) — assim não
+// precisa deixar o nome do repositório fixo no código.
+function githubRepoFromLocation(){
+  const m=location.hostname.match(/^([^.]+)\.github\.io$/i);
+  if(!m) return null;
+  const owner=m[1];
+  const partes=location.pathname.split('/').filter(Boolean);
+  const repo=partes.length?partes[0]:(owner+'.github.io');
+  return {owner,repo};
+}
+function formatDataHora(d){
+  return d.toLocaleDateString('pt-BR')+' às '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+}
+async function atualizarStatusComDataGit(qtd,sourceLabel){
+  const repoInfo=githubRepoFromLocation();
+  if(!repoInfo){
+    setStatus(`✅ ${qtd} solicitações carregadas de "${sourceLabel}"`,'ok');
+    return;
+  }
+  setStatus(`✅ ${qtd} solicitações · verificando data da última atualização...`,'ok');
+  try{
+    const url=`https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/commits?path=${encodeURIComponent(sourceLabel)}&per_page=1`;
+    const res=await fetch(url);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const commits=await res.json();
+    if(!commits.length) throw new Error('sem histórico de commits pra esse arquivo');
+    const iso=commits[0].commit.committer.date||commits[0].commit.author.date;
+    setStatus(`✅ ${qtd} solicitações · última atualização da planilha: ${formatDataHora(new Date(iso))}`,'ok');
+  }catch(err){
+    console.warn('[dashboard] não consegui checar a data no GitHub:',err.message);
+    setStatus(`✅ ${qtd} solicitações carregadas`,'ok');
   }
 }
 
@@ -1099,7 +1155,7 @@ function tryAutoLoad(){
   const timeout=new Promise((_,rej)=>setTimeout(()=>rej(new Error('tempo esgotado (5s)')),5000));
   Promise.race([fetch(XLSX_FILENAME+'?t='+Date.now()),timeout])
     .then(res=>{ if(!res.ok) throw new Error('HTTP '+res.status); return res.arrayBuffer(); })
-    .then(buf=>loadFromArrayBuffer(buf,XLSX_FILENAME))
+    .then(buf=>loadFromArrayBuffer(buf,XLSX_FILENAME,true))
     .catch(err=>{
       console.error('[dashboard] falha no fetch:',err);
       setStatus('Não carreguei "'+XLSX_FILENAME+'" ('+err.message+')','err');
