@@ -135,6 +135,19 @@
   .empty-state{padding:40px;text-align:center;color:var(--texto-suave);font-size:13.5px;}
   footer{padding:20px 30px 40px;color:var(--texto-suave);font-size:11.5px;text-align:center;}
   .tab-panel{display:none;} .tab-panel.active{display:block;}
+  .quick-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 18px 0;}
+  .quick-bar .qlabel{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--texto-suave);font-weight:700;margin-right:2px;}
+  .qchip{display:inline-flex;align-items:center;gap:7px;padding:6px 13px;border-radius:20px;border:1.5px solid var(--borda);
+    background:#fff;font-size:12.5px;font-weight:600;cursor:pointer;user-select:none;transition:all .12s;}
+  .qchip:hover{border-color:var(--azul-claro);}
+  .qchip .qn{background:#EEF0F5;color:var(--texto-suave);font-size:11px;padding:1px 7px;border-radius:10px;font-weight:700;}
+  .qchip.q-bad.active{background:var(--vermelho);border-color:var(--vermelho);color:#fff;}
+  .qchip.q-warn.active{background:var(--amarelo);border-color:var(--amarelo);color:#fff;}
+  .qchip.q-info.active{background:var(--azul);border-color:var(--azul);color:#fff;}
+  .qchip.active .qn{background:rgba(255,255,255,.28);color:#fff;}
+  .kpi.clicavel{cursor:pointer;transition:transform .1s,box-shadow .1s;}
+  .kpi.clicavel:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(31,50,102,.12);}
+  .kpi.selecionado{outline:2px solid var(--azul);}
   .nota{font-size:11.5px;color:var(--texto-suave);background:#F7F9FD;border-left:3px solid var(--azul-claro);
     padding:9px 13px;border-radius:0 8px 8px 0;margin-bottom:14px;}
 </style>
@@ -167,6 +180,7 @@
   <button class="tab-btn active" data-tab="geral">Visão Geral</button>
   <button class="tab-btn" data-tab="sistemas">Sistemas &amp; Módulos</button>
   <button class="tab-btn" data-tab="pessoas">Solicitantes</button>
+  <button class="tab-btn" data-tab="pendencias">Pendências</button>
   <button class="tab-btn" data-tab="prazos">Prazos &amp; SLA</button>
   <button class="tab-btn" data-tab="base">Base de Dados</button>
 </nav>
@@ -299,6 +313,35 @@
   </div>
 
   <!-- ===== PRAZOS & SLA ===== -->
+  <div class="tab-panel" id="tab-pendencias">
+    <div class="nota">
+      <b>Não resolvida</b> = todas as situações, exceto <b>Homologando, Cancelado, Resolvido, Liberado para cliente e Faturado</b>
+      (ou fila já em Resolvido/Cancelado). Esta aba mostra só as pendências, respeitando os demais filtros.
+    </div>
+    <div class="grid c3">
+      <div class="card tall">
+        <h3>Pendências por Situação</h3>
+        <p class="hint">Clique numa barra para filtrar</p>
+        <canvas id="chPendSituacao"></canvas>
+      </div>
+      <div class="card tall">
+        <h3>Idade das Pendências</h3>
+        <p class="hint">Dias desde a abertura, colorido pelo prazo</p>
+        <canvas id="chPendIdade"></canvas>
+      </div>
+      <div class="card tall">
+        <h3>Pendências por Sistema</h3>
+        <p class="hint">Colorido pelo prazo</p>
+        <canvas id="chPendSistema"></canvas>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Fila de Trabalho</h3>
+      <p class="hint">Ordenada por urgência: vencidas (maior atraso primeiro), vencendo em breve, no prazo e sem prazo</p>
+      <div class="table-wrap"><table id="tblPendencias"><thead></thead><tbody></tbody></table></div>
+    </div>
+  </div>
+
   <div class="tab-panel" id="tab-prazos">
     <div class="nota">
       Cálculo usado: o prazo considerado é o <b>Prazo SLA</b> (quando vazio, cai para o <b>Prazo entrega</b>).
@@ -381,6 +424,12 @@ const CANCELADAS = ['cancelado'];
 // valores da coluna "Fila" (Responsável no SISCON) que também indicam finalizado,
 // mesmo quando a Situação ainda não foi atualizada
 const CONCLUIDAS_FILA = ['resolvido'];
+
+// "Não resolvida" = qualquer situação EXCETO estas (homologando fica com o cliente,
+// então também não conta como pendência nossa). Se a Fila já estiver Resolvido/Cancelado
+// o chamado também sai da pendência.
+const SITUACOES_NAO_PENDENTES = ['homologando','cancelado','resolvido','liberado para cliente','faturado'];
+const FILAS_NAO_PENDENTES = ['resolvido','cancelado'];
 
 // Nomes das prioridades do SISCON (1 é a mais urgente)
 const PRIORIDADE_LABELS = {'1':'Mínima','2':'Baixa','3':'Normal','4':'Alta','5':'Máxima','6':'Não se aplica'};
@@ -561,6 +610,10 @@ function interpretRows(matrix){
     const vencendoEmBreve = (sla==='Dentro do prazo' && diasParaVencer!==null &&
       diasParaVencer>=0 && diasParaVencer<=DIAS_VENCENDO_EM_BREVE);
 
+    const pendente = !SITUACOES_NAO_PENDENTES.includes(labelKey(situacao)) &&
+                     !FILAS_NAO_PENDENTES.includes(labelKey(filaRaw));
+    const alerta = (sla==='Atrasado') ? 'Vencida' : (vencendoEmBreve ? 'Vencendo em breve' : null);
+
     out.push({
       protocolo:r[COL.protocolo],
       solicitante:nome(r[COL.solicitante]),
@@ -579,16 +632,19 @@ function interpretRows(matrix){
       diasAtraso:(prazo&&refFim>prazo)?diffDias(prazo,refFim):0,
       diasResolucao:(encerrado&&dataInclusao&&dataFim)?diffDias(dataInclusao,dataFim):null,
       diasParaVencer,
-      vencimento: vencendoEmBreve ? 'Vencendo em breve' : null
+      vencimento: vencendoEmBreve ? 'Vencendo em breve' : null,
+      alerta,
+      pendencia: pendente ? 'Não resolvida' : null
     });
   }
   return out;
 }
 
 // ============ filtros ============
-const FIELDS=['sistema','modulo','classificacao','grupo','situacao','solicitante','prioridade','sla','vencimento'];
+const FIELDS=['alerta','pendencia','sistema','modulo','classificacao','grupo','situacao','solicitante','prioridade','sla'];
+const QUICK_FIELDS=['alerta','pendencia']; // aparecem na barra de atalhos, não no painel recolhido
 const FIELD_LABELS={sistema:'Sistema',modulo:'Módulo',classificacao:'Classificação',grupo:'Andamento',
-  situacao:'Situação',solicitante:'Solicitante',prioridade:'Prioridade',sla:'Prazo',vencimento:'Vencimento'};
+  situacao:'Situação',solicitante:'Solicitante',prioridade:'Prioridade',sla:'Prazo',alerta:'Alerta',pendencia:'Pendência'};
 let filters={}; FIELDS.forEach(f=>filters[f]=new Set());
 let dateFrom=null, dateTo=null; // filtro de período (data de inclusão), formato YYYY-MM-DD
 let filtersOpen=false;
@@ -630,6 +686,26 @@ function getFilteredData(){
 function buildFilterPanel(){
   const panel=document.getElementById('filterPanel');
   panel.innerHTML='';
+
+  // ---- barra de atalhos (sempre visível) ----
+  const quick=document.createElement('div'); quick.className='quick-bar';
+  quick.innerHTML='<span class="qlabel">Atalhos</span>';
+  [
+    {field:'alerta',value:'Vencida',label:'⏰ Vencidas',cls:'q-bad'},
+    {field:'alerta',value:'Vencendo em breve',label:'⚠️ Vencendo em breve',cls:'q-warn'},
+    {field:'pendencia',value:'Não resolvida',label:'📂 Não resolvidas',cls:'q-info'}
+  ].forEach(q=>{
+    const n=RAW_DATA.filter(d=>d[q.field]===q.value).length;
+    const c=document.createElement('div');
+    c.className='qchip '+q.cls+(filters[q.field].has(q.value)?' active':'');
+    c.innerHTML=`${q.label} <span class="qn">${n}</span>`;
+    c.title=q.value==='Não resolvida'
+      ?'Todas as situações, exceto: Homologando, Cancelado, Resolvido, Liberado para cliente e Faturado'
+      :'';
+    c.onclick=()=>toggleFilter(q.field,q.value);
+    quick.appendChild(c);
+  });
+  panel.appendChild(quick);
 
   // ---- cabeçalho: toggle + resumo do que está ativo + limpar ----
   const head=document.createElement('div'); head.className='filters-head';
@@ -696,6 +772,7 @@ function buildFilterPanel(){
   body.appendChild(gPeriodo);
 
   FIELDS.forEach(field=>{
+    if(QUICK_FIELDS.includes(field)) return;
     const vals=uniqueValues(field);
     if(!vals.length) return;
     const g=document.createElement('div'); g.className='filter-group';
@@ -906,6 +983,60 @@ function renderCharts(data){
       scales:{...OPT_BAR.scales,x:{ticks:{callback:function(v){return shortLabel(this.getLabelForValue(v),10);}}}}}});
 }
 
+// ============ aba Pendências ============
+const PEND_STATUS_COLORS={'Vencida':COLORS.vermelho,'Vencendo em breve':COLORS.amarelo,'No prazo':COLORS.azulClaro,'Sem prazo':COLORS.cinza};
+const PEND_STATUS_ORDER=['Vencida','Vencendo em breve','No prazo','Sem prazo'];
+function statusPendencia(d){
+  if(d.alerta==='Vencida') return 'Vencida';
+  if(d.alerta==='Vencendo em breve') return 'Vencendo em breve';
+  return d.sla==='Sem prazo' ? 'Sem prazo' : 'No prazo';
+}
+function renderPendencias(data){
+  const pend=data.filter(d=>d.pendencia==='Não resolvida').map(d=>({...d,statusPend:statusPendencia(d)}));
+
+  const sit=sortedCount(pend,'situacao');
+  drawChart('pendSituacao','chPendSituacao',{type:'bar',
+    data:{labels:sit.labels,datasets:[{data:sit.values,backgroundColor:COLORS.amarelo,borderRadius:4}]},
+    options:{...OPT_BARH,onClick:clickFilter('situacao'),
+      scales:{...OPT_BARH.scales,y:{ticks:{callback:function(v){return shortLabel(this.getLabelForValue(v),24);}}}}}});
+
+  const faixas=[['0-7 dias',0,7],['8-30 dias',8,30],['31-60 dias',31,60],['61-90 dias',61,90],['Mais de 90',91,1e9]];
+  const faixaDe=d=>{ const x=d.diasEmAberto; if(x===null) return null; const f=faixas.find(f=>x>=f[1]&&x<=f[2]); return f?f[0]:null; };
+  drawChart('pendIdade','chPendIdade',{type:'bar',
+    data:{labels:faixas.map(f=>f[0]),datasets:PEND_STATUS_ORDER.map(st=>({
+      label:st,backgroundColor:PEND_STATUS_COLORS[st],borderRadius:3,
+      data:faixas.map(f=>pend.filter(d=>d.statusPend===st&&faixaDe(d)===f[0]).length)}))},
+    options:OPT_STACK});
+
+  const sis=sortedCount(pend,'sistema').labels;
+  drawChart('pendSistema','chPendSistema',{type:'bar',
+    data:{labels:sis,datasets:PEND_STATUS_ORDER.map(st=>({
+      label:st,backgroundColor:PEND_STATUS_COLORS[st],borderRadius:3,
+      data:sis.map(x=>pend.filter(d=>d.sistema===x&&d.statusPend===st).length)}))},
+    options:{...OPT_STACK,scales:{...OPT_STACK.scales,
+      x:{stacked:true,ticks:{callback:function(v){return shortLabel(this.getLabelForValue(v),10);}}}}}});
+
+  const rank={'Vencida':0,'Vencendo em breve':1,'No prazo':2,'Sem prazo':3};
+  pend.sort((a,b)=>{
+    if(rank[a.statusPend]!==rank[b.statusPend]) return rank[a.statusPend]-rank[b.statusPend];
+    if(a.statusPend==='Vencida') return b.diasAtraso-a.diasAtraso;
+    if(a.statusPend==='Sem prazo') return (b.diasEmAberto||0)-(a.diasEmAberto||0);
+    return (a.diasParaVencer??9999)-(b.diasParaVencer??9999);
+  });
+  const badge=d=>{
+    const cls={'Vencida':'b-vermelho','Vencendo em breve':'b-amarelo','No prazo':'b-azul','Sem prazo':'b-cinza'}[d.statusPend];
+    let t=d.statusPend;
+    if(d.statusPend==='Vencida') t+=' há '+d.diasAtraso+' d';
+    else if(d.statusPend==='Vencendo em breve') t+=d.diasParaVencer===0?' (hoje)':' ('+d.diasParaVencer+' d)';
+    return `<span class="badge ${cls}">${t}</span>`;
+  };
+  fillTable('tblPendencias',
+    `<tr><th>Protocolo</th><th>Sistema</th><th>Módulo</th><th>Resumo</th><th>Solicitante</th><th>Situação</th><th>Prio.</th><th>Prazo</th><th>Status do prazo</th><th>Dias em aberto</th></tr>`,
+    pend.map(d=>`<tr><td>${esc(d.protocolo)}</td><td><b>${esc(d.sistema)}</b></td><td>${esc(d.modulo)}</td>
+      <td style="max-width:300px">${esc(d.resumo)}</td><td>${esc(d.solicitante)}</td><td>${esc(d.situacao)}</td>
+      <td>${esc(d.prioridade)}</td><td>${fmtDate(d.prazo)}</td><td>${badge(d)}</td><td>${d.diasEmAberto??'—'}</td></tr>`).join(''),10);
+}
+
 // ============ KPIs ============
 function renderKpis(data){
   const total=data.length;
@@ -920,18 +1051,26 @@ function renderKpis(data){
   const resolvidos=data.filter(d=>d.diasResolucao!==null);
   const tmed=resolvidos.length?Math.round(resolvidos.reduce((a,b)=>a+b.diasResolucao,0)/resolvidos.length):0;
 
+  const naoResolvidas=data.filter(d=>d.pendencia==='Não resolvida').length;
   const kpis=[
     {n:total,l:'Total de Solicitações',c:''},
-    {n:andamento,l:'Em Andamento',c:'warn'},
-    {n:concluidas,l:'Concluídas',c:'ok'},
-    {n:atrasados,l:'Abertas em Atraso',c:'bad'},
-    {n:vencendo,l:`Vencendo em Breve (${DIAS_VENCENDO_EM_BREVE}d)`,c:'warn'},
+    {n:naoResolvidas,l:'Não Resolvidas',c:'info',f:['pendencia','Não resolvida']},
+    {n:atrasados,l:'Vencidas (abertas)',c:'bad',f:['alerta','Vencida']},
+    {n:vencendo,l:`Vencendo em Breve (${DIAS_VENCENDO_EM_BREVE}d)`,c:'warn',f:['alerta','Vencendo em breve']},
+    {n:andamento,l:'Em Andamento',c:'warn',f:['grupo','Em andamento']},
+    {n:concluidas,l:'Concluídas',c:'ok',f:['grupo','Concluído']},
     {n:pctSla+'%',l:'Prazo Cumprido',c:'info'},
     {n:tmed+'d',l:'Tempo Médio de Resolução',c:'info'},
-    {n:canceladas,l:'Canceladas',c:'neutro'}
+    {n:canceladas,l:'Canceladas',c:'neutro',f:['grupo','Cancelado']}
   ];
-  document.getElementById('kpiRow').innerHTML=kpis.map(k=>
-    `<div class="kpi ${k.c}"><div class="num">${k.n}</div><div class="lbl">${k.l}</div></div>`).join('');
+  const kRow=document.getElementById('kpiRow');
+  kRow.innerHTML=kpis.map((k,i)=>{
+    const sel=k.f&&filters[k.f[0]].has(k.f[1]);
+    return `<div class="kpi ${k.c}${k.f?' clicavel':''}${sel?' selecionado':''}" data-i="${i}"${k.f?' title="Clique para filtrar"':''}><div class="num">${k.n}</div><div class="lbl">${k.l}</div></div>`;
+  }).join('');
+  kRow.querySelectorAll('.kpi.clicavel').forEach(el=>{
+    el.onclick=()=>{ const f=kpis[+el.dataset.i].f; toggleFilter(f[0],f[1]); };
+  });
 
   const ds=data.map(d=>d.dataInclusao).filter(Boolean).sort();
   document.getElementById('updatedDate').textContent =
@@ -1068,6 +1207,7 @@ function renderAll(){
   renderKpis(data);
   renderCharts(data);
   renderTables(data);
+  renderPendencias(data);
 }
 
 // ============ carga do arquivo ============
