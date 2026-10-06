@@ -428,6 +428,9 @@ const CONCLUIDAS_FILA = ['resolvido'];
 // "Não resolvida" = qualquer situação EXCETO estas (homologando fica com o cliente,
 // então também não conta como pendência nossa). Se a Fila já estiver Resolvido/Cancelado
 // o chamado também sai da pendência.
+// Situações em que o chamado já foi entregue ao cliente: para prazo, contam como entregue
+// (pode ter sido entregue com atraso, mas não está mais em atraso)
+const SITUACOES_ENTREGUES_AO_CLIENTE = ['homologando'];
 const SITUACOES_NAO_PENDENTES = ['homologando','cancelado','resolvido','liberado para cliente','faturado'];
 const FILAS_NAO_PENDENTES = ['resolvido','cancelado'];
 
@@ -448,7 +451,7 @@ const COLORS = {azul:'#2F4A97',azulEscuro:'#1F3266',azulClaro:'#0098DB',verde:'#
 const PALETA = [COLORS.azul,COLORS.verde,COLORS.azulClaro,COLORS.amarelo,COLORS.roxo,
   COLORS.laranja,COLORS.verdeEscuro,COLORS.vermelho,COLORS.cinza,'#4C8A2A','#1B72A8','#B93A44'];
 
-const GRUPO_COLORS = {'Concluído':COLORS.verde,'Em andamento':COLORS.amarelo,'Cancelado':COLORS.cinza};
+const GRUPO_COLORS = {'Concluído':COLORS.verde,'Em andamento':COLORS.amarelo,'Homologando':COLORS.azulClaro,'Cancelado':COLORS.cinza};
 const SLA_COLORS = {
   'Concluído no prazo':COLORS.verde,'Dentro do prazo':COLORS.azulClaro,
   'Concluído com atraso':COLORS.laranja,'Atrasado':COLORS.vermelho,'Sem prazo':COLORS.cinza
@@ -460,7 +463,9 @@ Chart.defaults.font.size = 12;
 Chart.defaults.color = '#6B7690';
 
 let RAW_DATA = [];
-let HOJE = new Date();
+// comparações de prazo são feitas por dia (vence hoje = ainda dentro do prazo)
+const soDia=d=>d?new Date(d.getFullYear(),d.getMonth(),d.getDate()):null;
+let HOJE = soDia(new Date());
 
 // ============ normalização ============
 function stripAccents(s){ return s.normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
@@ -563,6 +568,7 @@ function grupoSituacao(situacao, fila){
   // a situação às vezes fica desatualizada mas a fila (Responsável) já mostra Resolvido
   if(CANCELADAS.includes(ks) || CANCELADAS.includes(kf)) return 'Cancelado';
   if(CONCLUIDAS.includes(ks) || CONCLUIDAS_FILA.includes(kf)) return 'Concluído';
+  if(SITUACOES_ENTREGUES_AO_CLIENTE.includes(ks)) return 'Homologando';
   return 'Em andamento';
 }
 function prioridadeLabel(v){
@@ -593,26 +599,29 @@ function interpretRows(matrix){
   for(const r of brutos){
     const dataInclusao=toDate(r[COL.dataInclusao]);
     const ultimaAlt=toDate(r[COL.ultimaAlteracao]);
-    const prazo=toDate(r[COL.prazoSla])||toDate(r[COL.prazoEntrega]);
+    const prazo=soDia(toDate(r[COL.prazoSla])||toDate(r[COL.prazoEntrega]));
     const situacao=(r[COL.situacao]||'—').toString().trim()||'—';
     const filaRaw=(r[COL.fila]||'—').toString().trim()||'—';
     const grupo=grupoSituacao(situacao, filaRaw);
     const encerrado=(grupo==='Concluído'||grupo==='Cancelado');
-    const dataFim=encerrado?ultimaAlt:null;
+    const entregue=SITUACOES_ENTREGUES_AO_CLIENTE.includes(labelKey(situacao));
+    const encerradoPrazo=encerrado||entregue; // para cálculo de prazo
+    const dataFim=encerradoPrazo?soDia(ultimaAlt):null;
     const refFim=dataFim||HOJE;
 
     let sla;
     if(!prazo) sla='Sem prazo';
-    else if(encerrado) sla=(refFim<=prazo)?'Concluído no prazo':'Concluído com atraso';
+    else if(encerradoPrazo) sla=(refFim<=prazo)?'Concluído no prazo':'Concluído com atraso';
     else sla=(HOJE<=prazo)?'Dentro do prazo':'Atrasado';
 
-    const diasParaVencer = (!encerrado && prazo) ? diffDias(HOJE,prazo) : null;
+    const diasParaVencer = (!encerradoPrazo && prazo) ? diffDias(HOJE,prazo) : null;
     const vencendoEmBreve = (sla==='Dentro do prazo' && diasParaVencer!==null &&
       diasParaVencer>=0 && diasParaVencer<=DIAS_VENCENDO_EM_BREVE);
 
     const pendente = !SITUACOES_NAO_PENDENTES.includes(labelKey(situacao)) &&
                      !FILAS_NAO_PENDENTES.includes(labelKey(filaRaw));
-    const alerta = (sla==='Atrasado') ? 'Vencida' : (vencendoEmBreve ? 'Vencendo em breve' : null);
+    // vencida / vencendo em breve só valem para chamados em aberto (Homologando fica com o cliente)
+    const alerta = !pendente ? null : (sla==='Atrasado' ? 'Vencida' : (vencendoEmBreve ? 'Vencendo em breve' : null));
 
     out.push({
       protocolo:r[COL.protocolo],
@@ -632,7 +641,7 @@ function interpretRows(matrix){
       diasAtraso:(prazo&&refFim>prazo)?diffDias(prazo,refFim):0,
       diasResolucao:(encerrado&&dataInclusao&&dataFim)?diffDias(dataInclusao,dataFim):null,
       diasParaVencer,
-      vencimento: vencendoEmBreve ? 'Vencendo em breve' : null,
+      vencimento: (pendente && vencendoEmBreve) ? 'Vencendo em breve' : null,
       alerta,
       pendencia: pendente ? 'Não resolvida' : null
     });
@@ -949,7 +958,7 @@ function renderCharts(data){
     options:{...OPT_BARH,plugins:{legend:{display:false},tooltip:{callbacks:{
       afterLabel:c=>abertos[c.dataIndex]?shortLabel(abertos[c.dataIndex].resumo,70):''}}}}});
 
-  const atrasados=data.filter(d=>d.sla==='Atrasado').sort((a,b)=>b.diasAtraso-a.diasAtraso).slice(0,15);
+  const atrasados=data.filter(d=>d.alerta==='Vencida').sort((a,b)=>b.diasAtraso-a.diasAtraso).slice(0,15);
   drawChart('atraso','chAtraso',{type:'bar',
     data:{labels:atrasados.map(a=>a.protocolo+' · '+shortLabel(a.sistema,8)),
       datasets:[{data:atrasados.map(a=>a.diasAtraso),backgroundColor:COLORS.vermelho,borderRadius:4}]},
@@ -1041,9 +1050,10 @@ function renderPendencias(data){
 function renderKpis(data){
   const total=data.length;
   const andamento=data.filter(d=>d.grupo==='Em andamento').length;
+  const homologando=data.filter(d=>d.grupo==='Homologando').length;
   const concluidas=data.filter(d=>d.grupo==='Concluído').length;
   const canceladas=data.filter(d=>d.grupo==='Cancelado').length;
-  const atrasados=data.filter(d=>d.sla==='Atrasado').length;
+  const atrasados=data.filter(d=>d.alerta==='Vencida').length;
   const vencendo=data.filter(d=>d.vencimento==='Vencendo em breve').length;
   const comPrazo=data.filter(d=>d.sla!=='Sem prazo');
   const noPrazo=comPrazo.filter(d=>d.sla==='Dentro do prazo'||d.sla==='Concluído no prazo').length;
@@ -1058,6 +1068,7 @@ function renderKpis(data){
     {n:atrasados,l:'Vencidas (abertas)',c:'bad',f:['alerta','Vencida']},
     {n:vencendo,l:`Vencendo em Breve (${DIAS_VENCENDO_EM_BREVE}d)`,c:'warn',f:['alerta','Vencendo em breve']},
     {n:andamento,l:'Em Andamento',c:'warn',f:['grupo','Em andamento']},
+    {n:homologando,l:'Homologando',c:'info',f:['grupo','Homologando']},
     {n:concluidas,l:'Concluídas',c:'ok',f:['grupo','Concluído']},
     {n:pctSla+'%',l:'Prazo Cumprido',c:'info'},
     {n:tmed+'d',l:'Tempo Médio de Resolução',c:'info'},
@@ -1084,7 +1095,7 @@ function slaBadge(s){
   return `<span class="badge ${cls}">${s}</span>`;
 }
 function grupoBadge(g){
-  const cls={'Concluído':'b-verde','Em andamento':'b-amarelo','Cancelado':'b-cinza'}[g]||'b-cinza';
+  const cls={'Concluído':'b-verde','Em andamento':'b-amarelo','Homologando':'b-azul','Cancelado':'b-cinza'}[g]||'b-cinza';
   return `<span class="badge ${cls}">${g}</span>`;
 }
 function esc(s){ return (''+(s??'')).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -1110,7 +1121,7 @@ function renderTables(data){
       return `<tr><td><b>${esc(s)}</b></td><td>${sub.length}</td>
         <td>${sub.filter(d=>d.grupo==='Em andamento').length}</td>
         <td>${sub.filter(d=>d.grupo==='Concluído').length}</td>
-        <td>${sub.filter(d=>d.sla==='Atrasado').length}</td>
+        <td>${sub.filter(d=>d.alerta==='Vencida').length}</td>
         <td>${cp.length?Math.round(ok/cp.length*100)+'%':'—'}</td>
         <td>${tm!==null?tm+' d':'—'}</td></tr>`;
     }).join(''),7);
@@ -1127,7 +1138,7 @@ function renderTables(data){
       return `<tr><td><b>${esc(s)}</b></td><td>${sub.length}</td>
         <td>${sub.filter(d=>d.grupo==='Em andamento').length}</td>
         <td>${sub.filter(d=>d.grupo==='Concluído').length}</td>
-        <td>${sub.filter(d=>d.sla==='Atrasado').length}</td>
+        <td>${sub.filter(d=>d.alerta==='Vencida').length}</td>
         <td>${top?esc(top[0])+' ('+top[1]+')':'—'}</td></tr>`;
     }).join(''),6);
 
@@ -1141,7 +1152,7 @@ function renderTables(data){
       <td><b style="color:var(--amarelo)">${d.diasParaVencer===0?'hoje':d.diasParaVencer+' d'}</b></td></tr>`).join(''),8);
 
   // atualmente em atraso: ainda abertos, já passaram do prazo
-  const atr=data.filter(d=>d.sla==='Atrasado').sort((a,b)=>b.diasAtraso-a.diasAtraso);
+  const atr=data.filter(d=>d.alerta==='Vencida').sort((a,b)=>b.diasAtraso-a.diasAtraso);
   fillTable('tblAtraso',
     `<tr><th>Protocolo</th><th>Sistema</th><th>Módulo</th><th>Resumo</th><th>Solicitante</th><th>Situação</th><th>Prazo</th><th>Dias de atraso</th></tr>`,
     atr.map(d=>`<tr><td>${esc(d.protocolo)}</td><td>${esc(d.sistema)}</td><td>${esc(d.modulo)}</td>
