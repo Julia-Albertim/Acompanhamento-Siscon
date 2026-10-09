@@ -150,6 +150,7 @@
   .kpi.selecionado{outline:2px solid var(--azul);}
   .nota{font-size:11.5px;color:var(--texto-suave);background:#F7F9FD;border-left:3px solid var(--azul-claro);
     padding:9px 13px;border-radius:0 8px 8px 0;margin-bottom:14px;}
+  .mud{font-size:11.5px;line-height:1.35;white-space:nowrap;} .mud b{font-weight:600;} .mud .dt{color:var(--texto-suave);}
   .alt-kpis{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
   .alt-kpi{flex:1;min-width:150px;background:#fff;border:1px solid var(--borda);border-radius:12px;padding:12px 14px;}
   .alt-kpi b{display:block;font-size:24px;color:var(--azul-escuro,#1F3266);line-height:1.1;}
@@ -712,10 +713,11 @@ function fmtValorAlt(campo,v){
 function enriquecerComHistorico(){
   if(!RAW_DATA) return;
   const hojeStr=ymd(HOJE);
-  const nEv={};
-  if(HIST) HIST.eventos.forEach(e=>{ nEv[e.protocolo]=(nEv[e.protocolo]||0)+1; });
+  const nEv={}, evPor={};
+  if(HIST) HIST.eventos.forEach(e=>{ nEv[e.protocolo]=(nEv[e.protocolo]||0)+1; (evPor[e.protocolo]=evPor[e.protocolo]||[]).push(e); });
   RAW_DATA.forEach(d=>{
-    d.prazoOriginal=null; d.prazoMudou=null; d.vencidaOrig=null; d.diasAtrasoOrig=null; d.nAlteracoes=0;
+    d.mudancas=evPor[''+d.protocolo]||[]; d.prazoOriginal=null; d.prazoMudou=null; d.vencidaOrig=null; d.diasAtrasoOrig=null; d.nAlteracoes=0; d.classMudou=null; d.prioMudou=null; d.classOriginal=null;
+    d.vencidaTotal=(HIST&&d.alerta==='Vencida')?'Vencida ou venceria pelo original':null;
     const h=HIST&&HIST.chamados[''+d.protocolo];
     if(!h) return;
     d.nAlteracoes=nEv[''+d.protocolo]||0;
@@ -723,9 +725,12 @@ function enriquecerComHistorico(){
     d.prazoOriginal=orig;
     if(orig&&d.prazo&&orig!==d.prazo) d.prazoMudou=(d.prazo>orig)?'Prazo adiado':'Prazo antecipado';
     if(d.pendencia&&orig&&orig<hojeStr&&d.alerta!=='Vencida'&&d.prazoMudou==='Prazo adiado'){
-      d.vencidaOrig='Vencida pelo prazo original';
+      d.vencidaOrig='Venceria pelo prazo original';
       d.diasAtrasoOrig=diffDias(new Date(orig+'T00:00:00'),HOJE);
+      d.vencidaTotal='Vencida ou venceria pelo original';
     }
+    if(d.mudancas.some(e=>e.campo==='classificacao')){ d.classMudou='Classificação alterada'; d.classOriginal=h.original.classificacao; }
+    if(d.mudancas.some(e=>e.campo==='prioridade')) d.prioMudou='Prioridade alterada';
   });
 }
 function carregarHistorico(){
@@ -736,10 +741,10 @@ function carregarHistorico(){
 }
 
 // ============ filtros ============
-const FIELDS=['alerta','pendencia','vencidaOrig','prazoMudou','sistema','modulo','classificacao','grupo','situacao','solicitante','prioridade','sla'];
-const QUICK_FIELDS=['alerta','pendencia','vencidaOrig','prazoMudou']; // aparecem na barra de atalhos, não no painel recolhido
+const FIELDS=['alerta','pendencia','vencidaTotal','vencidaOrig','prazoMudou','classMudou','prioMudou','sistema','modulo','classificacao','grupo','situacao','solicitante','prioridade','sla'];
+const QUICK_FIELDS=['alerta','pendencia','vencidaTotal','prazoMudou','classMudou','prioMudou']; // aparecem na barra de atalhos, não no painel recolhido
 const FIELD_LABELS={sistema:'Sistema',modulo:'Módulo',classificacao:'Classificação',grupo:'Andamento',
-  situacao:'Situação',solicitante:'Solicitante',prioridade:'Prioridade',sla:'Prazo',alerta:'Alerta',pendencia:'Pendência',vencidaOrig:'Vencida pelo prazo original',prazoMudou:'Prazo alterado'};
+  situacao:'Situação',solicitante:'Solicitante',prioridade:'Prioridade',sla:'Prazo',alerta:'Alerta',pendencia:'Pendência',vencidaOrig:'Prazo original',vencidaTotal:'Vencidas (somadas)',classMudou:'Classificação',prioMudou:'Prioridade (alterada)',prazoMudou:'Prazo alterado'};
 let filters={}; FIELDS.forEach(f=>filters[f]=new Set());
 let dateFrom=null, dateTo=null; // filtro de período (data de inclusão), formato YYYY-MM-DD
 let filtersOpen=false;
@@ -790,13 +795,16 @@ function buildFilterPanel(){
     {field:'alerta',value:'Vencendo em breve',label:'⚠️ Vencendo em breve',cls:'q-warn'},
     {field:'pendencia',value:'Não resolvida',label:'📂 Não resolvidas',cls:'q-info'},
     ...(HIST?[
-      {field:'vencidaOrig',value:'Vencida pelo prazo original',label:'🕵️ Vencidas pelo prazo original',cls:'q-bad',
-       tip:'Chamados não resolvidos que já estariam vencidos se o prazo não tivesse sido alterado'},
-      {field:'prazoMudou',value:'Prazo adiado',label:'📅 Prazo adiado',cls:'q-warn',
-       tip:'O prazo atual é posterior ao primeiro prazo registrado para o chamado'}
+      {field:'vencidaTotal',value:'Vencida ou venceria pelo original',label:'🧮 Vencidas + venceriam pelo original',cls:'q-bad',sep:'Controle de alterações',
+       tip:'Soma das vencidas hoje com as que só não estão vencidas porque o prazo foi adiado'},
+      {field:'prazoMudou',value:'Prazo adiado',label:'📅 Prazo adiado',cls:'q-warn'},
+      {field:'classMudou',value:'Classificação alterada',label:'🏷️ Classificação alterada',cls:'q-info',
+       tip:'Chamados que mudaram de classificação (ex.: CORRECAO → HELPDESK), com ou sem mudança de prazo'},
+      {field:'prioMudou',value:'Prioridade alterada',label:'⚡ Prioridade alterada',cls:'q-info'}
     ]:[])
   ].forEach(q=>{
     const n=RAW_DATA.filter(d=>d[q.field]===q.value).length;
+    if(q.sep){ const l=document.createElement('span'); l.className='qlabel'; l.style.marginLeft='14px'; l.textContent=q.sep; quick.appendChild(l); }
     const c=document.createElement('div');
     c.className='qchip '+q.cls+(filters[q.field].has(q.value)?' active':'');
     c.innerHTML=`${q.label} <span class="qn">${n}</span>`;
@@ -1087,6 +1095,16 @@ function renderCharts(data){
 // ============ aba Pendências ============
 const PEND_STATUS_COLORS={'Vencida':COLORS.vermelho,'Vencendo em breve':COLORS.amarelo,'No prazo':COLORS.azulClaro,'Sem prazo':COLORS.cinza};
 const PEND_STATUS_ORDER=['Vencida','Vencendo em breve','No prazo','Sem prazo'];
+function mudancasTxt(d){ // texto simples, para CSV
+  return (d.mudancas||[]).map(e=>`${CAMPO_LABEL[e.campo]}: ${fmtValorAlt(e.campo,e.antes)} -> ${fmtValorAlt(e.campo,e.depois)} (${fmtDH(e.em).slice(0,10)})`).join(' | ');
+}
+function mudancasCell(d){
+  if(!d.mudancas||!d.mudancas.length) return '<span style="color:var(--texto-suave)">—</span>';
+  return '<div class="mud">'+d.mudancas.map(e=>{
+    const f=v=>esc(fmtValorAlt(e.campo,v)).replace(/ \d\d:\d\d$/,'');
+    return `<div><b>${CAMPO_LABEL[e.campo]}:</b> ${f(e.antes)} → ${f(e.depois)} <span class="dt">(${fmtDH(e.em).slice(0,5)})</span></div>`;
+  }).join('')+'</div>';
+}
 function prazoOrigCell(d){
   if(!d.prazoOriginal) return '—';
   if(!d.prazoMudou) return '<span style="color:var(--texto-suave)">igual</span>';
@@ -1140,10 +1158,10 @@ function renderPendencias(data){
     return `<span class="badge ${cls}">${t}</span>`;
   };
   fillTable('tblPendencias',
-    `<tr><th>Protocolo</th><th>Sistema</th><th>Módulo</th><th>Resumo</th><th>Solicitante</th><th>Situação</th><th>Prio.</th><th>Prazo</th><th>Prazo original</th><th>Status do prazo</th><th>Dias em aberto</th></tr>`,
+    `<tr><th>Protocolo</th><th>Sistema</th><th>Módulo</th><th>Resumo</th><th>Solicitante</th><th>Situação</th><th>Prio.</th><th>Prazo</th><th>Prazo original</th><th>O que mudou</th><th>Status do prazo</th><th>Dias em aberto</th></tr>`,
     pend.map(d=>`<tr><td>${esc(d.protocolo)}</td><td><b>${esc(d.sistema)}</b></td><td>${esc(d.modulo)}</td>
       <td style="max-width:300px">${esc(d.resumo)}</td><td>${esc(d.solicitante)}</td><td>${esc(d.situacao)}</td>
-      <td>${esc(d.prioridade)}</td><td>${fmtDate(d.prazo)}</td><td>${prazoOrigCell(d)}</td><td>${badge(d)}</td><td>${d.diasEmAberto??'—'}</td></tr>`).join(''),11);
+      <td>${esc(d.prioridade)}</td><td>${fmtDate(d.prazo)}</td><td>${prazoOrigCell(d)}</td><td>${mudancasCell(d)}</td><td>${badge(d)}</td><td>${d.diasEmAberto??'—'}</td></tr>`).join(''),12);
 }
 
 // ============ KPIs ============
@@ -1284,14 +1302,14 @@ function renderTableBase(data){
   fillTable('tblBase',
     `<tr><th>Protocolo</th><th>Sistema</th><th>Módulo</th><th>Resumo</th><th>Classificação</th>
      <th>Solicitante</th><th>Prio.</th><th>Abertura</th><th>Prazo</th><th>Situação</th>
-     <th>Andamento</th><th>Prazo</th><th>Prazo original</th><th>Dias</th></tr>`,
+     <th>Andamento</th><th>Prazo</th><th>Prazo original</th><th>O que mudou</th><th>Dias</th></tr>`,
     f.map(d=>`<tr>
       <td>${esc(d.protocolo)}</td><td><b>${esc(d.sistema)}</b></td><td>${esc(d.modulo)}</td>
-      <td style="max-width:280px">${esc(d.resumo)}</td><td>${esc(d.classificacao)}</td>
+      <td style="max-width:280px">${esc(d.resumo)}</td><td>${esc(d.classificacao)}${d.classMudou?`<div class="mud dt">era: ${esc(d.classOriginal)}</div>`:''}</td>
       <td>${esc(d.solicitante)}</td><td>${esc(d.prioridade)}</td>
       <td>${fmtDate(d.dataInclusao)}</td><td>${fmtDate(d.prazo)}</td>
       <td>${esc(d.situacao)}</td><td>${grupoBadge(d.grupo)}</td><td>${slaBadge(d.sla)}</td>
-      <td>${prazoOrigCell(d)}</td><td>${d.diasEmAberto??'—'}</td></tr>`).join(''),14);
+      <td>${prazoOrigCell(d)}</td><td>${mudancasCell(d)}</td><td>${d.diasEmAberto??'—'}</td></tr>`).join(''),15);
 }
 
 function exportCsv(){
@@ -1299,9 +1317,9 @@ function exportCsv(){
   if(!f.length){ alert('Nada para exportar com os filtros atuais.'); return; }
   const cols=['protocolo','sistema','modulo','resumo','classificacao','solicitante','incluidoPor',
     'prioridade','dataInclusao','prazo','ultimaAlteracao','situacao','grupo','fila','sla',
-    'diasEmAberto','diasAtraso','diasResolucao','prazoOriginal','prazoMudou','vencidaOrig'];
+    'diasEmAberto','diasAtraso','diasResolucao','prazoOriginal','prazoMudou','vencidaOrig','mudancasTxt'];
   const linhas=[cols.join(';')].concat(f.map(d=>cols.map(c=>{
-    const v=d[c]??''; const s=(''+v).replace(/"/g,'""');
+    const v=c==='mudancasTxt'?mudancasTxt(d):(d[c]??''); const s=(''+v).replace(/"/g,'""');
     return /[;"\n]/.test(s)?`"${s}"`:s;
   }).join(';')));
   const blob=new Blob(['\ufeff'+linhas.join('\r\n')],{type:'text/csv;charset=utf-8;'});
