@@ -150,6 +150,14 @@
   .kpi.selecionado{outline:2px solid var(--azul);}
   .nota{font-size:11.5px;color:var(--texto-suave);background:#F7F9FD;border-left:3px solid var(--azul-claro);
     padding:9px 13px;border-radius:0 8px 8px 0;margin-bottom:14px;}
+  .alt-kpis{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
+  .alt-kpi{flex:1;min-width:150px;background:#fff;border:1px solid var(--borda);border-radius:12px;padding:12px 14px;}
+  .alt-kpi b{display:block;font-size:24px;color:var(--azul-escuro,#1F3266);line-height:1.1;}
+  .alt-kpi span{font-size:11.5px;color:var(--texto-suave);}
+  .alt-kpi.bad b{color:var(--vermelho);}
+  .alt-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;}
+  .alt-bar select,.alt-bar input{padding:8px 11px;border:1px solid var(--borda);border-radius:8px;font-size:13px;background:#fff;}
+  .alt-bar input{flex:1;min-width:200px;}
 </style>
 </head>
 <body>
@@ -182,6 +190,7 @@
   <button class="tab-btn" data-tab="pessoas">Solicitantes</button>
   <button class="tab-btn" data-tab="pendencias">Pendências</button>
   <button class="tab-btn" data-tab="prazos">Prazos &amp; SLA</button>
+  <button class="tab-btn" data-tab="alteracoes">Alterações</button>
   <button class="tab-btn" data-tab="base">Base de Dados</button>
 </nav>
 
@@ -391,6 +400,40 @@
   </div>
 
   <!-- ===== BASE ===== -->
+  <div class="tab-panel" id="tab-alteracoes">
+    <div class="nota" id="altNota">Carregando histórico...</div>
+    <div class="alt-kpis" id="altKpis"></div>
+    <div class="grid c2">
+      <div class="card tall">
+        <h3>Alterações Detectadas por Dia</h3>
+        <p class="hint">Data em que a mudança apareceu pela primeira vez na planilha</p>
+        <canvas id="chAltDia"></canvas>
+      </div>
+      <div class="card">
+        <h3>Prazo de Hoje × Prazo Original</h3>
+        <p class="hint">Chamados cujo prazo atual é diferente do primeiro prazo registrado — vermelho = estaria vencido pelo prazo original</p>
+        <div class="table-wrap" style="max-height:330px"><table id="tblPrazoLiquido"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Linha do Tempo das Alterações</h3>
+      <div class="alt-bar">
+        <select id="altCampo">
+          <option value="">Todos os campos</option>
+          <option value="prazo">Prazo</option>
+          <option value="classificacao">Classificação</option>
+          <option value="prioridade">Prioridade</option>
+          <option value="modulo">Módulo</option>
+          <option value="sistema">Sistema</option>
+        </select>
+        <input type="text" id="altBusca" placeholder="Buscar por protocolo ou resumo...">
+        <span class="count-tag" id="altCount"></span>
+        <button class="btn-refresh" id="btnAltCsv">⬇ Exportar CSV</button>
+      </div>
+      <div class="table-wrap"><table id="tblAlteracoes"><thead></thead><tbody></tbody></table></div>
+    </div>
+  </div>
+
   <div class="tab-panel" id="tab-base">
     <div class="card">
       <div class="search-row">
@@ -409,6 +452,7 @@
 // ============================================================
 //  CONFIGURAÇÃO
 // ============================================================
+const HISTORICO_FILENAME = 'historico.json'; // gerado por scripts/atualizar-historico.mjs
 const XLSX_FILENAME = 'Solicitacoes.xlsx';  // arquivo na mesma pasta do index.html
 
 // Colunas do export do SISCON (posição na planilha)
@@ -649,11 +693,53 @@ function interpretRows(matrix){
   return out;
 }
 
+// ============ histórico de alterações (historico.json) ============
+let HIST=null;
+const CAMPO_LABEL={prazo:'Prazo',classificacao:'Classificação',prioridade:'Prioridade',modulo:'Módulo',sistema:'Sistema'};
+function fmtDH(s){ // 'AAAA-MM-DD HH:MM' ou ISO -> 'dd/mm/aaaa hh:mm'
+  if(!s) return '—';
+  const m=(''+s).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if(!m) return s;
+  const hm=(m[4]==='00'&&m[5]==='00')?'':' '+m[4]+':'+m[5];
+  return m[3]+'/'+m[2]+'/'+m[1]+hm;
+}
+function fmtValorAlt(campo,v){
+  if(v===null||v===undefined||v==='') return '—';
+  if(campo==='prazo') return fmtDH(v);
+  if(campo==='prioridade') return prioridadeLabel(v);
+  return v;
+}
+function enriquecerComHistorico(){
+  if(!RAW_DATA) return;
+  const hojeStr=ymd(HOJE);
+  const nEv={};
+  if(HIST) HIST.eventos.forEach(e=>{ nEv[e.protocolo]=(nEv[e.protocolo]||0)+1; });
+  RAW_DATA.forEach(d=>{
+    d.prazoOriginal=null; d.prazoMudou=null; d.vencidaOrig=null; d.diasAtrasoOrig=null; d.nAlteracoes=0;
+    const h=HIST&&HIST.chamados[''+d.protocolo];
+    if(!h) return;
+    d.nAlteracoes=nEv[''+d.protocolo]||0;
+    const orig=h.original&&h.original.prazo?h.original.prazo.slice(0,10):null;
+    d.prazoOriginal=orig;
+    if(orig&&d.prazo&&orig!==d.prazo) d.prazoMudou=(d.prazo>orig)?'Prazo adiado':'Prazo antecipado';
+    if(d.pendencia&&orig&&orig<hojeStr&&d.alerta!=='Vencida'&&d.prazoMudou==='Prazo adiado'){
+      d.vencidaOrig='Vencida pelo prazo original';
+      d.diasAtrasoOrig=diffDias(new Date(orig+'T00:00:00'),HOJE);
+    }
+  });
+}
+function carregarHistorico(){
+  return fetch(HISTORICO_FILENAME+'?t='+Date.now())
+    .then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    .then(h=>{ HIST=h; })
+    .catch(err=>{ console.warn('[dashboard] historico.json não carregou:',err.message); HIST=null; });
+}
+
 // ============ filtros ============
-const FIELDS=['alerta','pendencia','sistema','modulo','classificacao','grupo','situacao','solicitante','prioridade','sla'];
-const QUICK_FIELDS=['alerta','pendencia']; // aparecem na barra de atalhos, não no painel recolhido
+const FIELDS=['alerta','pendencia','vencidaOrig','prazoMudou','sistema','modulo','classificacao','grupo','situacao','solicitante','prioridade','sla'];
+const QUICK_FIELDS=['alerta','pendencia','vencidaOrig','prazoMudou']; // aparecem na barra de atalhos, não no painel recolhido
 const FIELD_LABELS={sistema:'Sistema',modulo:'Módulo',classificacao:'Classificação',grupo:'Andamento',
-  situacao:'Situação',solicitante:'Solicitante',prioridade:'Prioridade',sla:'Prazo',alerta:'Alerta',pendencia:'Pendência'};
+  situacao:'Situação',solicitante:'Solicitante',prioridade:'Prioridade',sla:'Prazo',alerta:'Alerta',pendencia:'Pendência',vencidaOrig:'Vencida pelo prazo original',prazoMudou:'Prazo alterado'};
 let filters={}; FIELDS.forEach(f=>filters[f]=new Set());
 let dateFrom=null, dateTo=null; // filtro de período (data de inclusão), formato YYYY-MM-DD
 let filtersOpen=false;
@@ -702,15 +788,21 @@ function buildFilterPanel(){
   [
     {field:'alerta',value:'Vencida',label:'⏰ Vencidas',cls:'q-bad'},
     {field:'alerta',value:'Vencendo em breve',label:'⚠️ Vencendo em breve',cls:'q-warn'},
-    {field:'pendencia',value:'Não resolvida',label:'📂 Não resolvidas',cls:'q-info'}
+    {field:'pendencia',value:'Não resolvida',label:'📂 Não resolvidas',cls:'q-info'},
+    ...(HIST?[
+      {field:'vencidaOrig',value:'Vencida pelo prazo original',label:'🕵️ Vencidas pelo prazo original',cls:'q-bad',
+       tip:'Chamados não resolvidos que já estariam vencidos se o prazo não tivesse sido alterado'},
+      {field:'prazoMudou',value:'Prazo adiado',label:'📅 Prazo adiado',cls:'q-warn',
+       tip:'O prazo atual é posterior ao primeiro prazo registrado para o chamado'}
+    ]:[])
   ].forEach(q=>{
     const n=RAW_DATA.filter(d=>d[q.field]===q.value).length;
     const c=document.createElement('div');
     c.className='qchip '+q.cls+(filters[q.field].has(q.value)?' active':'');
     c.innerHTML=`${q.label} <span class="qn">${n}</span>`;
-    c.title=q.value==='Não resolvida'
+    c.title=q.tip||(q.value==='Não resolvida'
       ?'Todas as situações, exceto: Homologando, Cancelado, Resolvido, Liberado para cliente e Faturado'
-      :'';
+      :'');
     c.onclick=()=>toggleFilter(q.field,q.value);
     quick.appendChild(c);
   });
@@ -995,6 +1087,14 @@ function renderCharts(data){
 // ============ aba Pendências ============
 const PEND_STATUS_COLORS={'Vencida':COLORS.vermelho,'Vencendo em breve':COLORS.amarelo,'No prazo':COLORS.azulClaro,'Sem prazo':COLORS.cinza};
 const PEND_STATUS_ORDER=['Vencida','Vencendo em breve','No prazo','Sem prazo'];
+function prazoOrigCell(d){
+  if(!d.prazoOriginal) return '—';
+  if(!d.prazoMudou) return '<span style="color:var(--texto-suave)">igual</span>';
+  const t=fmtDate(d.prazoOriginal);
+  return d.vencidaOrig
+    ? `<span class="badge b-vermelho" title="Estaria vencido há ${d.diasAtrasoOrig} d pelo prazo original">${t} · venceria há ${d.diasAtrasoOrig} d</span>`
+    : `<span class="badge b-amarelo">${t} (${d.prazoMudou==='Prazo adiado'?'adiado':'antecipado'})</span>`;
+}
 function statusPendencia(d){
   if(d.alerta==='Vencida') return 'Vencida';
   if(d.alerta==='Vencendo em breve') return 'Vencendo em breve';
@@ -1040,10 +1140,10 @@ function renderPendencias(data){
     return `<span class="badge ${cls}">${t}</span>`;
   };
   fillTable('tblPendencias',
-    `<tr><th>Protocolo</th><th>Sistema</th><th>Módulo</th><th>Resumo</th><th>Solicitante</th><th>Situação</th><th>Prio.</th><th>Prazo</th><th>Status do prazo</th><th>Dias em aberto</th></tr>`,
+    `<tr><th>Protocolo</th><th>Sistema</th><th>Módulo</th><th>Resumo</th><th>Solicitante</th><th>Situação</th><th>Prio.</th><th>Prazo</th><th>Prazo original</th><th>Status do prazo</th><th>Dias em aberto</th></tr>`,
     pend.map(d=>`<tr><td>${esc(d.protocolo)}</td><td><b>${esc(d.sistema)}</b></td><td>${esc(d.modulo)}</td>
       <td style="max-width:300px">${esc(d.resumo)}</td><td>${esc(d.solicitante)}</td><td>${esc(d.situacao)}</td>
-      <td>${esc(d.prioridade)}</td><td>${fmtDate(d.prazo)}</td><td>${badge(d)}</td><td>${d.diasEmAberto??'—'}</td></tr>`).join(''),10);
+      <td>${esc(d.prioridade)}</td><td>${fmtDate(d.prazo)}</td><td>${prazoOrigCell(d)}</td><td>${badge(d)}</td><td>${d.diasEmAberto??'—'}</td></tr>`).join(''),11);
 }
 
 // ============ KPIs ============
@@ -1184,14 +1284,14 @@ function renderTableBase(data){
   fillTable('tblBase',
     `<tr><th>Protocolo</th><th>Sistema</th><th>Módulo</th><th>Resumo</th><th>Classificação</th>
      <th>Solicitante</th><th>Prio.</th><th>Abertura</th><th>Prazo</th><th>Situação</th>
-     <th>Andamento</th><th>Prazo</th><th>Dias</th></tr>`,
+     <th>Andamento</th><th>Prazo</th><th>Prazo original</th><th>Dias</th></tr>`,
     f.map(d=>`<tr>
       <td>${esc(d.protocolo)}</td><td><b>${esc(d.sistema)}</b></td><td>${esc(d.modulo)}</td>
       <td style="max-width:280px">${esc(d.resumo)}</td><td>${esc(d.classificacao)}</td>
       <td>${esc(d.solicitante)}</td><td>${esc(d.prioridade)}</td>
       <td>${fmtDate(d.dataInclusao)}</td><td>${fmtDate(d.prazo)}</td>
       <td>${esc(d.situacao)}</td><td>${grupoBadge(d.grupo)}</td><td>${slaBadge(d.sla)}</td>
-      <td>${d.diasEmAberto??'—'}</td></tr>`).join(''),13);
+      <td>${prazoOrigCell(d)}</td><td>${d.diasEmAberto??'—'}</td></tr>`).join(''),14);
 }
 
 function exportCsv(){
@@ -1199,7 +1299,7 @@ function exportCsv(){
   if(!f.length){ alert('Nada para exportar com os filtros atuais.'); return; }
   const cols=['protocolo','sistema','modulo','resumo','classificacao','solicitante','incluidoPor',
     'prioridade','dataInclusao','prazo','ultimaAlteracao','situacao','grupo','fila','sla',
-    'diasEmAberto','diasAtraso','diasResolucao'];
+    'diasEmAberto','diasAtraso','diasResolucao','prazoOriginal','prazoMudou','vencidaOrig'];
   const linhas=[cols.join(';')].concat(f.map(d=>cols.map(c=>{
     const v=d[c]??''; const s=(''+v).replace(/"/g,'""');
     return /[;"\n]/.test(s)?`"${s}"`:s;
@@ -1211,6 +1311,102 @@ function exportCsv(){
   a.click(); URL.revokeObjectURL(a.href);
 }
 
+// ============ aba Alterações ============
+let altCampo='', altBusca='';
+function eventosVisiveis(data){
+  const protos=new Set(data.map(d=>''+d.protocolo));
+  return HIST.eventos.filter(e=>protos.has(e.protocolo));
+}
+function renderAlteracoes(data){
+  const nota=document.getElementById('altNota');
+  if(!HIST){
+    nota.innerHTML='Não encontrei o <b>historico.json</b> ao lado do index.html. Rode <code>node scripts/atualizar-historico.mjs</code> e envie o arquivo gerado ao GitHub.';
+    document.getElementById('altKpis').innerHTML='';
+    ['tblPrazoLiquido','tblAlteracoes'].forEach(id=>fillTable(id,'','',1));
+    return;
+  }
+  const mapa={}; RAW_DATA.forEach(d=>{ mapa[''+d.protocolo]=d; });
+  const evs=eventosVisiveis(data);
+  const evPrazo=evs.filter(e=>e.campo==='prazo');
+  const adiados=evPrazo.filter(e=>(e.deltaDias||0)>0).length;
+  const antecip=evPrazo.filter(e=>(e.deltaDias||0)<0).length;
+  const jaVenc=evPrazo.filter(e=>e.jaVencido).length;
+  const chamadosAlt=new Set(evs.map(e=>e.protocolo)).size;
+  const nVencOrig=data.filter(d=>d.vencidaOrig).length;
+  const ini=HIST.snapshots.length?HIST.snapshots[0].em:null;
+  const fim=HIST.snapshots.length?HIST.snapshots[HIST.snapshots.length-1].em:null;
+  nota.innerHTML=`Histórico de <b>${HIST.snapshots.length}</b> versões da planilha, de <b>${fmtDH(ini)}</b> a <b>${fmtDH(fim)}</b>.
+    A planilha do SISCON não informa <i>quem</i> alterou, e cada alteração aparece com a data da primeira versão em que foi vista
+    (pode ter ocorrido alguns dias antes). "Prazo original" = primeiro prazo registrado para o chamado
+    (para os que já existiam em ${fmtDH(ini).slice(0,10)}, é o prazo daquela data).`;
+  document.getElementById('altKpis').innerHTML=`
+    <div class="alt-kpi"><b>${chamadosAlt}</b><span>chamados com alguma alteração</span></div>
+    <div class="alt-kpi"><b>${evPrazo.length}</b><span>mudanças de prazo (${adiados} adiadas · ${antecip} antecipadas)</span></div>
+    <div class="alt-kpi bad"><b>${jaVenc}</b><span>mudanças em prazo que já estava vencido</span></div>
+    <div class="alt-kpi bad"><b>${nVencOrig}</b><span>pendentes que estariam vencidos pelo prazo original</span></div>
+    <div class="alt-kpi"><b>${evs.filter(e=>e.campo==='classificacao').length}</b><span>trocas de classificação</span></div>
+    <div class="alt-kpi"><b>${evs.filter(e=>e.campo==='prioridade').length}</b><span>trocas de prioridade</span></div>`;
+
+  // gráfico por dia
+  const dias=[...new Set(evs.map(e=>e.em.slice(0,10)))].sort();
+  const camposOrd=['prazo','classificacao','prioridade','modulo','sistema'];
+  const corCampo={prazo:COLORS.vermelho,classificacao:COLORS.azul,prioridade:COLORS.amarelo,modulo:COLORS.verde,sistema:COLORS.cinza};
+  drawChart('altDia','chAltDia',{type:'bar',
+    data:{labels:dias.map(x=>x.slice(8,10)+'/'+x.slice(5,7)),
+      datasets:camposOrd.map(c=>({label:CAMPO_LABEL[c],backgroundColor:corCampo[c],borderRadius:3,
+        data:dias.map(x=>evs.filter(e=>e.campo===c&&e.em.slice(0,10)===x).length)}))},
+    options:OPT_STACK});
+
+  // prazo líquido
+  const liq=data.filter(d=>d.prazoMudou).sort((a,b)=>(b.vencidaOrig?1:0)-(a.vencidaOrig?1:0)||
+    Math.abs(new Date(b.prazo)-new Date(b.prazoOriginal))-Math.abs(new Date(a.prazo)-new Date(a.prazoOriginal)));
+  fillTable('tblPrazoLiquido',
+    `<tr><th>Protocolo</th><th>Resumo</th><th>Situação</th><th>Original</th><th>Hoje</th><th>Diferença</th></tr>`,
+    liq.map(d=>{
+      const df=diffDias(new Date(d.prazoOriginal+'T00:00:00'),new Date(d.prazo+'T00:00:00'));
+      return `<tr><td>${esc(d.protocolo)}</td><td style="max-width:220px">${esc(shortLabel(d.resumo,60))}</td><td>${esc(d.situacao)}</td>
+        <td>${fmtDate(d.prazoOriginal)}</td><td>${fmtDate(d.prazo)}</td>
+        <td><span class="badge ${d.vencidaOrig?'b-vermelho':(df>0?'b-amarelo':'b-azul')}">${df>0?'+':''}${df} d${d.vencidaOrig?' · venceria':''}</span></td></tr>`;
+    }).join(''),6);
+
+  // linha do tempo
+  const q=altBusca.trim().toLowerCase();
+  const lista=evs.filter(e=>(!altCampo||e.campo===altCampo)&&
+    (!q||(e.protocolo+' '+(mapa[e.protocolo]?mapa[e.protocolo].resumo:'')).toLowerCase().includes(q)))
+    .slice().sort((a,b)=>b.em.localeCompare(a.em)||a.protocolo.localeCompare(b.protocolo));
+  document.getElementById('altCount').textContent=`${lista.length} alterações`;
+  fillTable('tblAlteracoes',
+    `<tr><th>Detectada em</th><th>Protocolo</th><th>Resumo</th><th>Campo</th><th>Antes</th><th>Depois</th><th>Δ dias</th><th>Situação</th><th>Observação</th></tr>`,
+    lista.map(e=>{
+      const d=mapa[e.protocolo];
+      const junto=evs.filter(x=>x.protocolo===e.protocolo&&x.em===e.em&&x.campo!==e.campo).map(x=>CAMPO_LABEL[x.campo]);
+      const obs=[];
+      if(e.jaVencido) obs.push('<span class="badge b-vermelho">prazo antigo já vencido</span>');
+      if(e.situacaoAntes!==e.situacaoDepois) obs.push('<span class="badge b-cinza">situação também mudou</span>');
+      if(junto.length) obs.push('<span class="badge b-roxo">junto com: '+esc(junto.join(', '))+'</span>');
+      const dd=e.deltaDias;
+      return `<tr><td>${fmtDH(e.em)}</td><td>${esc(e.protocolo)}</td>
+        <td style="max-width:260px">${esc(shortLabel(d?d.resumo:(HIST.chamados[e.protocolo]||{}).resumo||'',70))}</td>
+        <td><b>${CAMPO_LABEL[e.campo]}</b></td><td>${esc(fmtValorAlt(e.campo,e.antes))}</td><td>${esc(fmtValorAlt(e.campo,e.depois))}</td>
+        <td>${dd===undefined?'—':`<span class="badge ${dd>0?'b-amarelo':'b-azul'}">${dd>0?'+':''}${dd}</span>`}</td>
+        <td>${esc(e.situacaoDepois||'—')}</td><td>${obs.join(' ')||'—'}</td></tr>`;
+    }).join(''),9);
+}
+function exportAlteracoesCsv(){
+  if(!HIST){ alert('Histórico não carregado.'); return; }
+  const mapa={}; RAW_DATA.forEach(d=>{ mapa[''+d.protocolo]=d; });
+  const rows=[['detectada_em','protocolo','sistema','resumo','campo','antes','depois','delta_dias','situacao_antes','situacao_depois','prazo_antigo_ja_vencido']];
+  eventosVisiveis(getFilteredData()).forEach(e=>{
+    const h=HIST.chamados[e.protocolo]||{};
+    rows.push([e.em,e.protocolo,h.sistema||'',h.resumo||'',CAMPO_LABEL[e.campo],fmtValorAlt(e.campo,e.antes),fmtValorAlt(e.campo,e.depois),
+      e.deltaDias??'',e.situacaoAntes||'',e.situacaoDepois||'',e.campo==='prazo'?(e.jaVencido?'sim':'nao'):'']);
+  });
+  const csv=rows.map(r=>r.map(v=>{ const s=(''+v).replace(/"/g,'""'); return /[;"\n]/.test(s)?`"${s}"`:s; }).join(';')).join('\r\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'}));
+  a.download='siscon_alteracoes.csv'; a.click(); URL.revokeObjectURL(a.href);
+}
+
 // ============ render ============
 function renderAll(){
   buildFilterPanel();
@@ -1219,6 +1415,7 @@ function renderAll(){
   renderCharts(data);
   renderTables(data);
   renderPendencias(data);
+  renderAlteracoes(data);
 }
 
 // ============ carga do arquivo ============
@@ -1249,6 +1446,7 @@ function loadFromArrayBuffer(buf,sourceLabel,doGit){
       return;
     }
     RAW_DATA=parsed;
+    enriquecerComHistorico();
     clearFilters();
     hideEmptyBanner();
     if(doGit) atualizarStatusComDataGit(parsed.length,sourceLabel);
@@ -1304,7 +1502,7 @@ function tryAutoLoad(){
   }
   setStatus('Carregando '+XLSX_FILENAME+'...','');
   const timeout=new Promise((_,rej)=>setTimeout(()=>rej(new Error('tempo esgotado (5s)')),5000));
-  Promise.race([fetch(XLSX_FILENAME+'?t='+Date.now()),timeout])
+  Promise.race([carregarHistorico().then(()=>fetch(XLSX_FILENAME+'?t='+Date.now())),timeout])
     .then(res=>{ if(!res.ok) throw new Error('HTTP '+res.status); return res.arrayBuffer(); })
     .then(buf=>loadFromArrayBuffer(buf,XLSX_FILENAME,true))
     .catch(err=>{
@@ -1338,6 +1536,9 @@ document.getElementById('searchBox').addEventListener('input',e=>{
   baseSearch=e.target.value; renderTableBase(getFilteredData());
 });
 document.getElementById('btnCsv').addEventListener('click',exportCsv);
+document.getElementById('altCampo').addEventListener('change',e=>{ altCampo=e.target.value; renderAlteracoes(getFilteredData()); });
+document.getElementById('altBusca').addEventListener('input',e=>{ altBusca=e.target.value; renderAlteracoes(getFilteredData()); });
+document.getElementById('btnAltCsv').addEventListener('click',exportAlteracoesCsv);
 document.getElementById('btnRefresh').addEventListener('click',tryAutoLoad);
 wireFileInput(document.getElementById('fileInput'));
 wireFileInput(document.getElementById('fileInputBig'));
