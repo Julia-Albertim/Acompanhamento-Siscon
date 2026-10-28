@@ -6,6 +6,7 @@
 <title>Dashboard SISCON — Solicitações | CompesaPrev</title>
 <script src="vendor/chart.umd.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
+<script src="vendor/html2canvas.min.js"></script>
 <style>
   :root{
     --azul:#2F4A97; --azul-escuro:#1F3266; --azul-claro:#0098DB;
@@ -348,13 +349,15 @@
     <div class="card">
       <h3>Fila de Trabalho</h3>
       <p class="hint">Ordenada por urgência: vencidas (maior atraso primeiro), vencendo em breve, no prazo e sem prazo</p>
+      <div style="margin-bottom:10px"><button class="btn-refresh" id="btnImgPend">🖼️ Salvar como imagem</button></div>
       <div class="table-wrap"><table id="tblPendencias"><thead></thead><tbody></tbody></table></div>
     </div>
   </div>
 
   <div class="tab-panel" id="tab-prazos">
     <div class="nota">
-      Cálculo usado: o prazo considerado é o <b>Prazo SLA</b> (quando vazio, cai para o <b>Prazo entrega</b>).
+      Cálculo usado: o prazo considerado é o <b>primeiro prazo registrado</b> do chamado (Prazo SLA; quando vazio, Prazo entrega) — se o SISCON
+      alterar o prazo depois, o painel mantém o inicial (o novo aparece na coluna "Prazo no SISCON"). Chamados sem histórico usam o prazo da planilha.
       Para chamados encerrados compara-se a <b>Última Alteração</b> com o prazo; para os que seguem abertos,
       compara-se com a data de hoje. "Vencendo em breve" = ainda dentro do prazo, mas faltam
       <span id="notaDiasVencendo">2</span> dias ou menos.
@@ -411,8 +414,8 @@
         <canvas id="chAltDia"></canvas>
       </div>
       <div class="card">
-        <h3>Prazo de Hoje × Prazo Original</h3>
-        <p class="hint">Chamados cujo prazo atual é diferente do primeiro prazo registrado — vermelho = estaria vencido pelo prazo original</p>
+        <h3>Prazo Inicial × Prazo Atual no SISCON</h3>
+        <p class="hint">O painel usa o prazo inicial. Aqui estão os chamados em que o SISCON hoje mostra outro prazo — vermelho = vencida pelo prazo inicial, mas o SISCON já não mostra como vencida</p>
         <div class="table-wrap" style="max-height:330px"><table id="tblPrazoLiquido"><thead></thead><tbody></tbody></table></div>
       </div>
     </div>
@@ -430,6 +433,7 @@
         <input type="text" id="altBusca" placeholder="Buscar por protocolo ou resumo...">
         <span class="count-tag" id="altCount"></span>
         <button class="btn-refresh" id="btnAltCsv">⬇ Exportar CSV</button>
+        <button class="btn-refresh" id="btnImgAlt">🖼️ Salvar como imagem</button>
       </div>
       <div class="table-wrap"><table id="tblAlteracoes"><thead></thead><tbody></tbody></table></div>
     </div>
@@ -441,6 +445,7 @@
         <input type="text" id="searchBox" placeholder="Buscar por protocolo, resumo, solicitante, módulo...">
         <span class="count-tag" id="rowCount"></span>
         <button class="btn-refresh" id="btnCsv">⬇ Exportar CSV (filtrado)</button>
+        <button class="btn-refresh" id="btnImgBase">🖼️ Salvar como imagem</button>
       </div>
       <div class="table-wrap"><table id="tblBase"><thead></thead><tbody></tbody></table></div>
     </div>
@@ -644,7 +649,13 @@ function interpretRows(matrix){
   for(const r of brutos){
     const dataInclusao=toDate(r[COL.dataInclusao]);
     const ultimaAlt=toDate(r[COL.ultimaAlteracao]);
-    const prazo=soDia(toDate(r[COL.prazoSla])||toDate(r[COL.prazoEntrega]));
+    const prazoSiscon=soDia(toDate(r[COL.prazoSla])||toDate(r[COL.prazoEntrega]));
+    // prazo oficial do painel = PRIMEIRO prazo registrado (historico.json); o que o SISCON mandar depois nao substitui
+    const hist=HIST&&HIST.chamados[''+r[COL.protocolo]];
+    // historico antigo (sem prazoInicial): usa o primeiro prazo visto (original.prazo)
+    const pRaw=hist?(hist.prazoInicial!==undefined?hist.prazoInicial:(hist.original&&hist.original.prazo)):null;
+    const pIni=pRaw?pRaw.slice(0,10):null;
+    const prazo=pIni?new Date(pIni+'T00:00:00'):prazoSiscon;
     const situacao=(r[COL.situacao]||'—').toString().trim()||'—';
     const filaRaw=(r[COL.fila]||'—').toString().trim()||'—';
     const grupo=grupoSituacao(situacao, filaRaw);
@@ -680,7 +691,7 @@ function interpretRows(matrix){
       fila:filaRaw,
       prioridade:prioridadeLabel(r[COL.prioridade]),
       dataInclusao:ymd(dataInclusao), mesInclusao:ym(dataInclusao),
-      ultimaAlteracao:ymd(ultimaAlt), prazo:ymd(prazo),
+      ultimaAlteracao:ymd(ultimaAlt), prazo:ymd(prazo), prazoSiscon:ymd(prazoSiscon),
       encerrado, sla,
       diasEmAberto: dataInclusao?diffDias(dataInclusao,refFim):null,
       diasAtraso:(prazo&&refFim>prazo)?diffDias(prazo,refFim):0,
@@ -716,19 +727,19 @@ function enriquecerComHistorico(){
   const nEv={}, evPor={};
   if(HIST) HIST.eventos.forEach(e=>{ nEv[e.protocolo]=(nEv[e.protocolo]||0)+1; (evPor[e.protocolo]=evPor[e.protocolo]||[]).push(e); });
   RAW_DATA.forEach(d=>{
-    d.mudancas=evPor[''+d.protocolo]||[]; d.prazoOriginal=null; d.prazoMudou=null; d.vencidaOrig=null; d.diasAtrasoOrig=null; d.nAlteracoes=0; d.classMudou=null; d.prioMudou=null; d.classOriginal=null;
-    d.vencidaTotal=(HIST&&d.alerta==='Vencida')?'Vencida ou venceria pelo original':null;
+    d.mudancas=evPor[''+d.protocolo]||[]; d.nAlteracoes=nEv[''+d.protocolo]||0;
+    d.temAlteracao=(HIST&&d.mudancas.length)?'Com alguma alteração':null;
+    d.prazoMudou=null; d.vencidaOrig=null; d.vencidaSiscon=null; d.vencidaTotal=null;
+    d.classMudou=null; d.prioMudou=null; d.classOriginal=null;
     const h=HIST&&HIST.chamados[''+d.protocolo];
-    if(!h) return;
-    d.nAlteracoes=nEv[''+d.protocolo]||0;
-    const orig=h.original&&h.original.prazo?h.original.prazo.slice(0,10):null;
-    d.prazoOriginal=orig;
-    if(orig&&d.prazo&&orig!==d.prazo) d.prazoMudou=(d.prazo>orig)?'Prazo adiado':'Prazo antecipado';
-    if(d.pendencia&&orig&&orig<hojeStr&&d.alerta!=='Vencida'&&d.prazoMudou==='Prazo adiado'){
-      d.vencidaOrig='Venceria pelo prazo original';
-      d.diasAtrasoOrig=diffDias(new Date(orig+'T00:00:00'),HOJE);
-      d.vencidaTotal='Vencida ou venceria pelo original';
-    }
+    if(!HIST||!h) return;
+    // d.prazo = prazo inicial (usado em todo o painel); d.prazoSiscon = o que o SISCON mostra hoje
+    if(d.prazo&&!d.prazoSiscon) d.prazoMudou='Prazo removido'; // tinha prazo e o SISCON hoje não mostra nenhum
+    else if(d.prazo&&d.prazoSiscon&&d.prazo!==d.prazoSiscon) d.prazoMudou=(d.prazoSiscon>d.prazo)?'Prazo adiado':'Prazo antecipado';
+    const vencSiscon=!!(d.pendencia&&d.prazoSiscon&&d.prazoSiscon<hojeStr);
+    if(vencSiscon) d.vencidaSiscon='Vencida no prazo atual do SISCON';
+    if(d.alerta==='Vencida'&&d.prazoSiscon&&d.prazoSiscon>=hojeStr) d.vencidaOrig='Vencida só pelo prazo inicial (SISCON adiou)';
+    if(d.alerta==='Vencida'||vencSiscon) d.vencidaTotal='Vencida em qualquer dos dois prazos';
     if(d.mudancas.some(e=>e.campo==='classificacao')){ d.classMudou='Classificação alterada'; d.classOriginal=h.original.classificacao; }
     if(d.mudancas.some(e=>e.campo==='prioridade')) d.prioMudou='Prioridade alterada';
   });
@@ -741,10 +752,10 @@ function carregarHistorico(){
 }
 
 // ============ filtros ============
-const FIELDS=['alerta','pendencia','vencidaTotal','vencidaOrig','prazoMudou','classMudou','prioMudou','sistema','modulo','classificacao','grupo','situacao','solicitante','prioridade','sla'];
-const QUICK_FIELDS=['alerta','pendencia','vencidaTotal','prazoMudou','classMudou','prioMudou']; // aparecem na barra de atalhos, não no painel recolhido
+const FIELDS=['alerta','pendencia','temAlteracao','vencidaTotal','vencidaSiscon','vencidaOrig','prazoMudou','classMudou','prioMudou','sistema','modulo','classificacao','grupo','situacao','solicitante','prioridade','sla'];
+const QUICK_FIELDS=['alerta','pendencia','temAlteracao','vencidaTotal','vencidaSiscon','vencidaOrig','prazoMudou','classMudou','prioMudou']; // aparecem na barra de atalhos, não no painel recolhido
 const FIELD_LABELS={sistema:'Sistema',modulo:'Módulo',classificacao:'Classificação',grupo:'Andamento',
-  situacao:'Situação',solicitante:'Solicitante',prioridade:'Prioridade',sla:'Prazo',alerta:'Alerta',pendencia:'Pendência',vencidaOrig:'Prazo original',vencidaTotal:'Vencidas (somadas)',classMudou:'Classificação',prioMudou:'Prioridade (alterada)',prazoMudou:'Prazo alterado'};
+  situacao:'Situação',solicitante:'Solicitante',prioridade:'Prioridade',sla:'Prazo',alerta:'Alerta',pendencia:'Pendência',temAlteracao:'Alterações',vencidaOrig:'Vencidas que o SISCON adiou',vencidaSiscon:'Vencidas no SISCON',vencidaTotal:'Vencidas (somadas)',classMudou:'Classificação',prioMudou:'Prioridade (alterada)',prazoMudou:'Prazo alterado'};
 let filters={}; FIELDS.forEach(f=>filters[f]=new Set());
 let dateFrom=null, dateTo=null; // filtro de período (data de inclusão), formato YYYY-MM-DD
 let filtersOpen=false;
@@ -791,13 +802,21 @@ function buildFilterPanel(){
   const quick=document.createElement('div'); quick.className='quick-bar';
   quick.innerHTML='<span class="qlabel">Atalhos</span>';
   [
-    {field:'alerta',value:'Vencida',label:'⏰ Vencidas',cls:'q-bad'},
+    // 'Vencidas' sai da barra quando o historico existe (seria igual a 'Vencidas + venceriam pelo original'); sem historico, continua
+    ...(HIST?[]:[{field:'alerta',value:'Vencida',label:'⏰ Vencidas',cls:'q-bad'}]),
     {field:'alerta',value:'Vencendo em breve',label:'⚠️ Vencendo em breve',cls:'q-warn'},
     {field:'pendencia',value:'Não resolvida',label:'📂 Não resolvidas',cls:'q-info'},
     ...(HIST?[
-      {field:'vencidaTotal',value:'Vencida ou venceria pelo original',label:'🧮 Vencidas + venceriam pelo original',cls:'q-bad',sep:'Controle de alterações',
-       tip:'Soma das vencidas hoje com as que só não estão vencidas porque o prazo foi adiado'},
-      {field:'prazoMudou',value:'Prazo adiado',label:'📅 Prazo adiado',cls:'q-warn'},
+      {field:'temAlteracao',value:'Com alguma alteração',label:'🔀 Qualquer alteração',cls:'q-info',sep:'Controle de alterações',
+       tip:'Todos os chamados que tiveram qualquer mudança registrada: prazo, classificação, prioridade, módulo ou sistema'},
+      {field:'vencidaSiscon',value:'Vencida no prazo atual do SISCON',label:'🏢 Vencidas pelo prazo do SISCON',cls:'q-bad',
+       tip:'Pendentes vencidas pelo prazo que o SISCON mostra HOJE (que pode ter sido alterado). É o que o SISCON enxerga como atraso'},
+      {field:'vencidaOrig',value:'Vencida só pelo prazo inicial (SISCON adiou)',label:'🕵️ Vencidas que o SISCON adiou',cls:'q-bad',
+       tip:'Estão em Vencidas (prazo inicial), mas o SISCON mudou o prazo para uma data futura e por isso parecem em dia lá'},
+      {field:'vencidaTotal',value:'Vencida em qualquer dos dois prazos',label:'🧮 Vencidas + venceriam pelo original',cls:'q-bad',
+       tip:'Soma, sem repetir: vencidas pelo prazo atual do SISCON + vencidas pelo prazo inicial. Como Vencidas já usa o prazo inicial, o número costuma ser igual ao de Vencidas'},
+      {field:'prazoMudou',value:'Prazo adiado',label:'📅 Prazo adiado',cls:'q-warn',tip:'O SISCON hoje mostra um prazo posterior ao inicial'},
+      {field:'prazoMudou',value:'Prazo removido',label:'🗑️ Prazo removido',cls:'q-bad',tip:'O chamado tinha prazo e o SISCON hoje não mostra nenhum'},
       {field:'classMudou',value:'Classificação alterada',label:'🏷️ Classificação alterada',cls:'q-info',
        tip:'Chamados que mudaram de classificação (ex.: CORRECAO → HELPDESK), com ou sem mudança de prazo'},
       {field:'prioMudou',value:'Prioridade alterada',label:'⚡ Prioridade alterada',cls:'q-info'}
@@ -1105,13 +1124,14 @@ function mudancasCell(d){
     return `<div><b>${CAMPO_LABEL[e.campo]}:</b> ${f(e.antes)} → ${f(e.depois)} <span class="dt">(${fmtDH(e.em).slice(0,5)})</span></div>`;
   }).join('')+'</div>';
 }
-function prazoOrigCell(d){
-  if(!d.prazoOriginal) return '—';
+function prazoSisconCell(d){
+  if(d.prazoMudou==='Prazo removido') return `<span class="badge b-vermelho" title="O SISCON hoje não mostra prazo para este chamado">sem prazo no SISCON${d.alerta==='Vencida'?' · vencida':''}</span>`;
+  if(!d.prazoSiscon) return '—';
   if(!d.prazoMudou) return '<span style="color:var(--texto-suave)">igual</span>';
-  const t=fmtDate(d.prazoOriginal);
+  const t=fmtDate(d.prazoSiscon), tipo=d.prazoMudou==='Prazo adiado'?'adiado':'antecipado';
   return d.vencidaOrig
-    ? `<span class="badge b-vermelho" title="Estaria vencido há ${d.diasAtrasoOrig} d pelo prazo original">${t} · venceria há ${d.diasAtrasoOrig} d</span>`
-    : `<span class="badge b-amarelo">${t} (${d.prazoMudou==='Prazo adiado'?'adiado':'antecipado'})</span>`;
+    ? `<span class="badge b-vermelho" title="Vencida pelo prazo inicial; o SISCON mostra outro prazo">${t} (${tipo}) · SISCON não mostra vencida</span>`
+    : `<span class="badge ${tipo==='adiado'?'b-amarelo':'b-azul'}">${t} (${tipo})</span>`;
 }
 function statusPendencia(d){
   if(d.alerta==='Vencida') return 'Vencida';
@@ -1158,10 +1178,10 @@ function renderPendencias(data){
     return `<span class="badge ${cls}">${t}</span>`;
   };
   fillTable('tblPendencias',
-    `<tr><th>Protocolo</th><th>Sistema</th><th>Módulo</th><th>Resumo</th><th>Solicitante</th><th>Situação</th><th>Prio.</th><th>Prazo</th><th>Prazo original</th><th>O que mudou</th><th>Status do prazo</th><th>Dias em aberto</th></tr>`,
+    `<tr><th>Protocolo</th><th>Sistema</th><th>Módulo</th><th>Resumo</th><th>Solicitante</th><th>Situação</th><th>Prio.</th><th>Prazo</th><th>Prazo no SISCON</th><th>O que mudou</th><th>Status do prazo</th><th>Dias em aberto</th></tr>`,
     pend.map(d=>`<tr><td>${esc(d.protocolo)}</td><td><b>${esc(d.sistema)}</b></td><td>${esc(d.modulo)}</td>
       <td style="max-width:300px">${esc(d.resumo)}</td><td>${esc(d.solicitante)}</td><td>${esc(d.situacao)}</td>
-      <td>${esc(d.prioridade)}</td><td>${fmtDate(d.prazo)}</td><td>${prazoOrigCell(d)}</td><td>${mudancasCell(d)}</td><td>${badge(d)}</td><td>${d.diasEmAberto??'—'}</td></tr>`).join(''),12);
+      <td>${esc(d.prioridade)}</td><td>${fmtDate(d.prazo)}</td><td>${prazoSisconCell(d)}</td><td>${mudancasCell(d)}</td><td>${badge(d)}</td><td>${d.diasEmAberto??'—'}</td></tr>`).join(''),12);
 }
 
 // ============ KPIs ============
@@ -1292,9 +1312,10 @@ function renderTables(data){
 
 let baseSearch='';
 function baseFiltered(data){
-  if(!baseSearch) return data;
-  const q=baseSearch.toLowerCase();
-  return data.filter(d=>Object.values(d).some(v=>String(v).toLowerCase().includes(q)));
+  const norm=t=>String(t).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+  const q=norm(baseSearch.replace(/\s+/g,' ').trim()); // ignora espaços nas pontas e acentos
+  if(!q) return data;
+  return data.filter(d=>Object.values(d).some(v=>norm(v).includes(q)));
 }
 function renderTableBase(data){
   const f=baseFiltered(data);
@@ -1302,14 +1323,14 @@ function renderTableBase(data){
   fillTable('tblBase',
     `<tr><th>Protocolo</th><th>Sistema</th><th>Módulo</th><th>Resumo</th><th>Classificação</th>
      <th>Solicitante</th><th>Prio.</th><th>Abertura</th><th>Prazo</th><th>Situação</th>
-     <th>Andamento</th><th>Prazo</th><th>Prazo original</th><th>O que mudou</th><th>Dias</th></tr>`,
+     <th>Andamento</th><th>Prazo</th><th>Prazo no SISCON</th><th>O que mudou</th><th>Dias</th></tr>`,
     f.map(d=>`<tr>
       <td>${esc(d.protocolo)}</td><td><b>${esc(d.sistema)}</b></td><td>${esc(d.modulo)}</td>
       <td style="max-width:280px">${esc(d.resumo)}</td><td>${esc(d.classificacao)}${d.classMudou?`<div class="mud dt">era: ${esc(d.classOriginal)}</div>`:''}</td>
       <td>${esc(d.solicitante)}</td><td>${esc(d.prioridade)}</td>
       <td>${fmtDate(d.dataInclusao)}</td><td>${fmtDate(d.prazo)}</td>
       <td>${esc(d.situacao)}</td><td>${grupoBadge(d.grupo)}</td><td>${slaBadge(d.sla)}</td>
-      <td>${prazoOrigCell(d)}</td><td>${mudancasCell(d)}</td><td>${d.diasEmAberto??'—'}</td></tr>`).join(''),15);
+      <td>${prazoSisconCell(d)}</td><td>${mudancasCell(d)}</td><td>${d.diasEmAberto??'—'}</td></tr>`).join(''),15);
 }
 
 function exportCsv(){
@@ -1317,7 +1338,7 @@ function exportCsv(){
   if(!f.length){ alert('Nada para exportar com os filtros atuais.'); return; }
   const cols=['protocolo','sistema','modulo','resumo','classificacao','solicitante','incluidoPor',
     'prioridade','dataInclusao','prazo','ultimaAlteracao','situacao','grupo','fila','sla',
-    'diasEmAberto','diasAtraso','diasResolucao','prazoOriginal','prazoMudou','vencidaOrig','mudancasTxt'];
+    'diasEmAberto','diasAtraso','diasResolucao','prazoSiscon','prazoMudou','vencidaOrig','vencidaSiscon','mudancasTxt'];
   const linhas=[cols.join(';')].concat(f.map(d=>cols.map(c=>{
     const v=c==='mudancasTxt'?mudancasTxt(d):(d[c]??''); const s=(''+v).replace(/"/g,'""');
     return /[;"\n]/.test(s)?`"${s}"`:s;
@@ -1350,18 +1371,19 @@ function renderAlteracoes(data){
   const antecip=evPrazo.filter(e=>(e.deltaDias||0)<0).length;
   const jaVenc=evPrazo.filter(e=>e.jaVencido).length;
   const chamadosAlt=new Set(evs.map(e=>e.protocolo)).size;
-  const nVencOrig=data.filter(d=>d.vencidaOrig).length;
+  const nVencOrig=data.filter(d=>d.vencidaOrig).length, nVencSiscon=data.filter(d=>d.vencidaSiscon).length, nVencTotal=data.filter(d=>d.vencidaTotal).length;
   const ini=HIST.snapshots.length?HIST.snapshots[0].em:null;
   const fim=HIST.snapshots.length?HIST.snapshots[HIST.snapshots.length-1].em:null;
   nota.innerHTML=`Histórico de <b>${HIST.snapshots.length}</b> versões da planilha, de <b>${fmtDH(ini)}</b> a <b>${fmtDH(fim)}</b>.
     A planilha do SISCON não informa <i>quem</i> alterou, e cada alteração aparece com a data da primeira versão em que foi vista
     (pode ter ocorrido alguns dias antes). "Prazo original" = primeiro prazo registrado para o chamado
-    (para os que já existiam em ${fmtDH(ini).slice(0,10)}, é o prazo daquela data).`;
+    (para os que já existiam em ${fmtDH(ini).slice(0,10)}, é o prazo daquela data).
+    <b>Todo o painel usa o prazo inicial</b>; se o SISCON mandar outro prazo numa planilha nova, ele não substitui.`;
   document.getElementById('altKpis').innerHTML=`
     <div class="alt-kpi"><b>${chamadosAlt}</b><span>chamados com alguma alteração</span></div>
     <div class="alt-kpi"><b>${evPrazo.length}</b><span>mudanças de prazo (${adiados} adiadas · ${antecip} antecipadas)</span></div>
     <div class="alt-kpi bad"><b>${jaVenc}</b><span>mudanças em prazo que já estava vencido</span></div>
-    <div class="alt-kpi bad"><b>${nVencOrig}</b><span>pendentes que estariam vencidos pelo prazo original</span></div>
+    <div class="alt-kpi bad"><b>${nVencTotal}</b><span>vencidas somando os dois prazos (${nVencSiscon} no SISCON · ${nVencOrig} só pelo prazo inicial)</span></div>
     <div class="alt-kpi"><b>${evs.filter(e=>e.campo==='classificacao').length}</b><span>trocas de classificação</span></div>
     <div class="alt-kpi"><b>${evs.filter(e=>e.campo==='prioridade').length}</b><span>trocas de prioridade</span></div>`;
 
@@ -1377,18 +1399,18 @@ function renderAlteracoes(data){
 
   // prazo líquido
   const liq=data.filter(d=>d.prazoMudou).sort((a,b)=>(b.vencidaOrig?1:0)-(a.vencidaOrig?1:0)||
-    Math.abs(new Date(b.prazo)-new Date(b.prazoOriginal))-Math.abs(new Date(a.prazo)-new Date(a.prazoOriginal)));
+    (b.prazoSiscon?Math.abs(new Date(b.prazoSiscon)-new Date(b.prazo)):1e13)-(a.prazoSiscon?Math.abs(new Date(a.prazoSiscon)-new Date(a.prazo)):1e13));
   fillTable('tblPrazoLiquido',
-    `<tr><th>Protocolo</th><th>Resumo</th><th>Situação</th><th>Original</th><th>Hoje</th><th>Diferença</th></tr>`,
+    `<tr><th>Protocolo</th><th>Resumo</th><th>Situação</th><th>Prazo inicial</th><th>No SISCON</th><th>Diferença</th></tr>`,
     liq.map(d=>{
-      const df=diffDias(new Date(d.prazoOriginal+'T00:00:00'),new Date(d.prazo+'T00:00:00'));
+      const df=d.prazoSiscon?diffDias(new Date(d.prazo+'T00:00:00'),new Date(d.prazoSiscon+'T00:00:00')):null;
       return `<tr><td>${esc(d.protocolo)}</td><td style="max-width:220px">${esc(shortLabel(d.resumo,60))}</td><td>${esc(d.situacao)}</td>
-        <td>${fmtDate(d.prazoOriginal)}</td><td>${fmtDate(d.prazo)}</td>
-        <td><span class="badge ${d.vencidaOrig?'b-vermelho':(df>0?'b-amarelo':'b-azul')}">${df>0?'+':''}${df} d${d.vencidaOrig?' · venceria':''}</span></td></tr>`;
+        <td>${fmtDate(d.prazo)}</td><td>${d.prazoSiscon?fmtDate(d.prazoSiscon):'<b>sem prazo</b>'}</td>
+        <td>${df===null?`<span class="badge b-vermelho">removido${d.alerta==='Vencida'?' · vencida':''}</span>`:`<span class="badge ${d.vencidaOrig?'b-vermelho':(df>0?'b-amarelo':'b-azul')}">${df>0?'+':''}${df} d${d.vencidaOrig?' · vencida':''}</span>`}</td></tr>`;
     }).join(''),6);
 
   // linha do tempo
-  const q=altBusca.trim().toLowerCase();
+  const q=altBusca.replace(/\s+/g,' ').trim().toLowerCase();
   const lista=evs.filter(e=>(!altCampo||e.campo===altCampo)&&
     (!q||(e.protocolo+' '+(mapa[e.protocolo]?mapa[e.protocolo].resumo:'')).toLowerCase().includes(q)))
     .slice().sort((a,b)=>b.em.localeCompare(a.em)||a.protocolo.localeCompare(b.protocolo));
@@ -1423,6 +1445,40 @@ function exportAlteracoesCsv(){
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'}));
   a.download='siscon_alteracoes.csv'; a.click(); URL.revokeObjectURL(a.href);
+}
+
+// ============ exportar tabela como imagem ============
+function exportTableImage(tableId,titulo,slug,extra){
+  if(typeof html2canvas==='undefined'){ alert('A biblioteca de imagem não carregou (vendor/html2canvas.min.js).'); return; }
+  const tbl=document.getElementById(tableId);
+  const linhas=tbl.querySelectorAll('tbody tr').length;
+  const filtros=[]; FIELDS.forEach(f=>filters[f].forEach(v=>filtros.push(v)));
+  if(dateFrom||dateTo) filtros.push('Período: '+(dateFrom?fmtDate(dateFrom):'início')+' – '+(dateTo?fmtDate(dateTo):'hoje'));
+  if(extra) filtros.push(extra);
+  const hoje=new Date();
+  const box=document.createElement('div');
+  box.style.cssText='position:fixed;left:-100000px;top:0;background:#fff;padding:22px 24px;color:#1F2A44;';
+  box.style.width=(Math.max(tbl.scrollWidth,900)+48)+'px';
+  box.innerHTML=`<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+      <img src="logo.png" style="height:46px">
+      <div><div style="font-size:18px;font-weight:700">${esc(titulo)}</div>
+      <div style="font-size:12px;color:#6B7390">Gerado em ${hoje.toLocaleDateString('pt-BR')} às ${hoje.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})} · ${linhas} registros · ${filtros.length?'Filtros: '+esc(filtros.join(', ')):'sem filtros'}</div></div></div>`;
+  const clone=tbl.cloneNode(true);
+  clone.querySelectorAll('th').forEach(th=>{ th.style.position='static'; });
+  clone.style.width='100%';
+  box.appendChild(clone);
+  document.body.appendChild(box);
+  const altura=linhas*55+150;
+  const scale=altura<7000?2:(altura<12000?1.5:1);
+  html2canvas(box,{scale,backgroundColor:'#ffffff',useCORS:true,logging:false}).then(canvas=>{
+    canvas.toBlob(blob=>{
+      const a=document.createElement('a');
+      a.href=URL.createObjectURL(blob);
+      a.download=`siscon_${slug}_${ymd(hoje)}.png`;
+      a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+    },'image/png');
+  }).catch(err=>{ console.error('[dashboard] erro ao gerar imagem:',err); alert('Não consegui gerar a imagem: '+err.message); })
+    .finally(()=>box.remove());
 }
 
 // ============ render ============
@@ -1554,6 +1610,9 @@ document.getElementById('searchBox').addEventListener('input',e=>{
   baseSearch=e.target.value; renderTableBase(getFilteredData());
 });
 document.getElementById('btnCsv').addEventListener('click',exportCsv);
+document.getElementById('btnImgBase').addEventListener('click',()=>exportTableImage('tblBase','Dashboard SISCON — Base de Dados','base',baseSearch?('Busca: '+baseSearch):''));
+document.getElementById('btnImgPend').addEventListener('click',()=>exportTableImage('tblPendencias','Dashboard SISCON — Fila de Trabalho (Pendências)','pendencias'));
+document.getElementById('btnImgAlt').addEventListener('click',()=>exportTableImage('tblAlteracoes','Dashboard SISCON — Linha do Tempo das Alterações','alteracoes',altCampo?('Campo: '+CAMPO_LABEL[altCampo]):''));
 document.getElementById('altCampo').addEventListener('change',e=>{ altCampo=e.target.value; renderAlteracoes(getFilteredData()); });
 document.getElementById('altBusca').addEventListener('input',e=>{ altBusca=e.target.value; renderAlteracoes(getFilteredData()); });
 document.getElementById('btnAltCsv').addEventListener('click',exportAlteracoesCsv);
