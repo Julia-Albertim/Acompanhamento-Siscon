@@ -349,7 +349,7 @@
     <div class="card">
       <h3>Fila de Trabalho</h3>
       <p class="hint">Ordenada por urgência: vencidas (maior atraso primeiro), vencendo em breve, no prazo e sem prazo</p>
-      <div style="margin-bottom:10px"><button class="btn-refresh" id="btnImgPend">🖼️ Salvar como imagem</button></div>
+      <div style="margin-bottom:10px"><button class="btn-refresh" id="btnImgPend">🖼️ Salvar como imagem</button> <button class="btn-refresh" id="btnImgPendImp">🖨️ Imagem para imprimir</button></div>
       <div class="table-wrap"><table id="tblPendencias"><thead></thead><tbody></tbody></table></div>
     </div>
   </div>
@@ -446,6 +446,7 @@
         <span class="count-tag" id="rowCount"></span>
         <button class="btn-refresh" id="btnCsv">⬇ Exportar CSV (filtrado)</button>
         <button class="btn-refresh" id="btnImgBase">🖼️ Salvar como imagem</button>
+        <button class="btn-refresh" id="btnImgBaseImp">🖨️ Imagem para imprimir</button>
       </div>
       <div class="table-wrap"><table id="tblBase"><thead></thead><tbody></tbody></table></div>
     </div>
@@ -1448,37 +1449,128 @@ function exportAlteracoesCsv(){
 }
 
 // ============ exportar tabela como imagem ============
-function exportTableImage(tableId,titulo,slug,extra){
+function exportTableImage(tableId,titulo,slug,extra,compacto){
   if(typeof html2canvas==='undefined'){ alert('A biblioteca de imagem não carregou (vendor/html2canvas.min.js).'); return; }
   const tbl=document.getElementById(tableId);
-  const linhas=tbl.querySelectorAll('tbody tr').length;
+  const nLinhas=tbl.querySelectorAll('tbody tr').length;
   const filtros=[]; FIELDS.forEach(f=>filters[f].forEach(v=>filtros.push(v)));
   if(dateFrom||dateTo) filtros.push('Período: '+(dateFrom?fmtDate(dateFrom):'início')+' – '+(dateTo?fmtDate(dateTo):'hoje'));
   if(extra) filtros.push(extra);
   const hoje=new Date();
-  const box=document.createElement('div');
-  box.style.cssText='position:fixed;left:-100000px;top:0;background:#fff;padding:22px 24px;color:#1F2A44;';
-  box.style.width=(Math.max(tbl.scrollWidth,900)+48)+'px';
-  box.innerHTML=`<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+  // cada imagem tem o formato de uma folha A4 deitada, para imprimir sem encolher
+  let W=compacto?1400:1320, H=Math.round(W/1.4142); const PAD=compacto?18:24, RODAPE=compacto?22:26;
+  const headHtml=`<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
       <img src="logo.png" style="height:46px">
       <div><div style="font-size:18px;font-weight:700">${esc(titulo)}</div>
-      <div style="font-size:12px;color:#6B7390">Gerado em ${hoje.toLocaleDateString('pt-BR')} às ${hoje.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})} · ${linhas} registros · ${filtros.length?'Filtros: '+esc(filtros.join(', ')):'sem filtros'}</div></div></div>`;
-  const clone=tbl.cloneNode(true);
-  clone.querySelectorAll('th').forEach(th=>{ th.style.position='static'; });
-  clone.style.width='100%';
-  box.appendChild(clone);
-  document.body.appendChild(box);
-  const altura=linhas*55+150;
-  const scale=altura<7000?2:(altura<12000?1.5:1);
-  html2canvas(box,{scale,backgroundColor:'#ffffff',useCORS:true,logging:false}).then(canvas=>{
-    canvas.toBlob(blob=>{
-      const a=document.createElement('a');
-      a.href=URL.createObjectURL(blob);
-      a.download=`siscon_${slug}_${ymd(hoje)}.png`;
-      a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),2000);
-    },'image/png');
-  }).catch(err=>{ console.error('[dashboard] erro ao gerar imagem:',err); alert('Não consegui gerar a imagem: '+err.message); })
-    .finally(()=>box.remove());
+      <div style="font-size:12px;color:#6B7390">Gerado em ${hoje.toLocaleDateString('pt-BR')} às ${hoje.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})} · ${nLinhas} registros · ${filtros.length?'Filtros: '+esc(filtros.join(', ')):'sem filtros'}</div></div></div>`;
+  // nas páginas seguintes (modo imprimir) o cabeçalho é de uma linha só, para sobrar mais espaço para os chamados
+  const headHtml2=`<div style="font-size:14px;font-weight:700;margin-bottom:8px">${esc(titulo)} <span style="font-weight:400;color:#6B7390;font-size:12px">· continuação</span></div>`;
+  const novaCaixa=(h)=>{
+    const d=document.createElement('div');
+    d.style.cssText='position:fixed;left:-100000px;top:0;background:#fff;color:#1F2A44;box-sizing:border-box;padding:'+PAD+'px;width:'+W+'px;'+(h?'height:'+h+'px;overflow:hidden;':'');
+    return d;
+  };
+  const clonar=()=>{
+    const c=tbl.cloneNode(true);
+    c.removeAttribute('id');
+    c.querySelectorAll('th').forEach(th=>{ th.style.position='static'; });
+    c.style.width='100%'; c.style.minWidth='0';
+    if(compacto){
+      // versão para impressão: só as colunas principais, para a letra ficar maior na folha
+      const cab=[...c.querySelectorAll('thead th')];
+      let achouPrazo=false;
+      const manter=cab.map(th=>{
+        const t=th.textContent.trim().toLowerCase();
+        if(t==='prazo'){ if(achouPrazo) return false; achouPrazo=true; return true; }
+        return ['protocolo','resumo','classificação','solicitante','prazo no siscon','o que mudou','andamento'].includes(t);
+      });
+      c.querySelectorAll('tr').forEach(tr=>{
+        if(tr.children.length!==manter.length) return;
+        for(let k=manter.length-1;k>=0;k--) if(!manter[k]) tr.children[k].remove();
+      });
+    }
+    const ths=[...c.querySelectorAll('thead th')];
+    const iRes=ths.findIndex(th=>/resumo/i.test(th.textContent));
+    if(compacto){
+      // larguras fixas: o Resumo fica com todo o espaço que sobrar, então cabem mais chamados por folha
+      c.style.tableLayout='fixed';
+      const LARG={'protocolo':80,'classificação':140,'solicitante':105,'prazo':95,'andamento':125,'prazo no siscon':175,'o que mudou':230};
+      ths.forEach(th=>{ const w=LARG[th.textContent.trim().toLowerCase()]; if(w){ th.style.width=w+'px'; th.style.minWidth=w+'px'; } });
+      // selos compridos de "Prazo no SISCON" (ex.: "· SISCON não mostra vencida") quebram linha em vez de invadir a coluna ao lado
+      const iSis=ths.findIndex(th=>/prazo no siscon/i.test(th.textContent));
+      if(iSis>=0) c.querySelectorAll('tbody tr').forEach(tr=>{ const td=tr.children[iSis]; if(td){ td.style.whiteSpace='normal'; td.querySelectorAll('*').forEach(e=>{ e.style.whiteSpace='normal'; }); } });
+    } else if(iRes>=0) ths[iRes].style.width='22%'; // coluna Resumo mais larga: linhas ficam mais baixas
+    // versão compacta para a folha: menos espaço entre colunas e "O que mudou" quebrando linha
+    c.querySelectorAll('th,td').forEach(x=>{ x.style.paddingLeft='7px'; x.style.paddingRight='7px'; if(compacto){ x.style.paddingTop='5px'; x.style.paddingBottom='5px'; } });
+    const iMud=ths.findIndex(th=>/o que mudou/i.test(th.textContent));
+    if(iMud>=0){
+      if(!compacto){ ths[iMud].style.width='250px'; ths[iMud].style.minWidth='250px'; }
+      c.querySelectorAll('tbody tr').forEach(tr=>{ const td=tr.children[iMud]; if(td){ td.style.whiteSpace='normal'; td.querySelectorAll('*').forEach(e=>{ e.style.whiteSpace='normal'; }); } });
+    }
+    return c;
+  };
+  // 1) mede o cabeçalho, as colunas e a altura de cada linha
+  const medir=()=>{
+    const med=novaCaixa(0);
+    med.innerHTML=headHtml;
+    const mclone=clonar();
+    med.appendChild(mclone);
+    document.body.appendChild(med);
+    const t2=document.createElement('div'); t2.innerHTML=headHtml2; med.appendChild(t2);
+    const hdr2H=t2.firstElementChild.offsetHeight+8; t2.remove();
+    const r={
+      hdr2H,
+      hdrH:med.firstElementChild.offsetHeight+14,
+      theadH:mclone.querySelector('thead').offsetHeight,
+      larguras:[...mclone.querySelectorAll('thead th')].map(th=>th.getBoundingClientRect().width),
+      alturas:[...mclone.querySelectorAll('tbody tr')].map(r=>r.offsetHeight),
+    };
+    med.remove();
+    return r;
+  };
+  let m=medir();
+  // se as colunas não cabem na folha, a folha cresce (mantendo a proporção A4) para não cortar nada
+  const soma=(a)=>a.reduce((x,y)=>x+y,0);
+  if(soma(m.larguras)>W-2*PAD+1){ W=Math.ceil(soma(m.larguras))+2*PAD; H=Math.round(W/1.4142); m=medir(); }
+  const {hdrH,hdr2H,theadH,larguras,alturas}=m;
+  // 2) reparte as linhas em páginas
+  const dispDe=(pg)=>H-2*PAD-((compacto&&pg>0)?hdr2H:hdrH)-theadH-RODAPE;
+  const paginas=[]; let ini=0, acc=0;
+  alturas.forEach((h,i)=>{
+    if(i>ini && acc+h>dispDe(paginas.length)){ paginas.push([ini,i]); ini=i; acc=0; }
+    acc+=h;
+  });
+  paginas.push([ini,alturas.length]);
+  const N=paginas.length;
+  // 3) gera uma imagem por página
+  const baixar=(canvas,nome)=>new Promise(res=>canvas.toBlob(blob=>{
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob); a.download=nome; a.click();
+    setTimeout(()=>{URL.revokeObjectURL(a.href); res();},700);
+  },'image/png'));
+  (async()=>{
+    try{
+      for(let i=0;i<N;i++){
+        const box=novaCaixa(H);
+        box.innerHTML=(compacto&&i>0)?headHtml2:headHtml;
+        const c=clonar();
+        c.style.tableLayout='fixed';
+        c.style.width=soma(larguras)+'px';
+        c.querySelectorAll('thead th').forEach((th,k)=>{ th.style.width=larguras[k]+'px'; });
+        [...c.querySelectorAll('tbody tr')].forEach((r,k)=>{ if(k<paginas[i][0]||k>=paginas[i][1]) r.remove(); });
+        box.appendChild(c);
+        const rod=document.createElement('div');
+        rod.style.cssText='position:absolute;right:'+PAD+'px;bottom:10px;font-size:11px;color:#6B7390';
+        rod.textContent='Página '+(i+1)+' de '+N;
+        box.appendChild(rod);
+        document.body.appendChild(box);
+        try{
+          const canvas=await html2canvas(box,{scale:2,backgroundColor:'#ffffff',useCORS:true,logging:false});
+          await baixar(canvas,`siscon_${slug}${compacto?'_impressao':''}_${ymd(hoje)}${N>1?'_p'+(i+1)+'de'+N:''}.png`);
+        } finally { box.remove(); }
+      }
+    }catch(err){ console.error('[dashboard] erro ao gerar imagem:',err); alert('Não consegui gerar a imagem: '+err.message); }
+  })();
 }
 
 // ============ render ============
@@ -1612,6 +1704,8 @@ document.getElementById('searchBox').addEventListener('input',e=>{
 document.getElementById('btnCsv').addEventListener('click',exportCsv);
 document.getElementById('btnImgBase').addEventListener('click',()=>exportTableImage('tblBase','Dashboard SISCON — Base de Dados','base',baseSearch?('Busca: '+baseSearch):''));
 document.getElementById('btnImgPend').addEventListener('click',()=>exportTableImage('tblPendencias','Dashboard SISCON — Fila de Trabalho (Pendências)','pendencias'));
+document.getElementById('btnImgBaseImp').addEventListener('click',()=>exportTableImage('tblBase','Dashboard SISCON — Base de Dados','base',baseSearch?('Busca: '+baseSearch):'',true));
+document.getElementById('btnImgPendImp').addEventListener('click',()=>exportTableImage('tblPendencias','Dashboard SISCON — Fila de Trabalho (Pendências)','pendencias','',true));
 document.getElementById('btnImgAlt').addEventListener('click',()=>exportTableImage('tblAlteracoes','Dashboard SISCON — Linha do Tempo das Alterações','alteracoes',altCampo?('Campo: '+CAMPO_LABEL[altCampo]):''));
 document.getElementById('altCampo').addEventListener('change',e=>{ altCampo=e.target.value; renderAlteracoes(getFilteredData()); });
 document.getElementById('altBusca').addEventListener('input',e=>{ altBusca=e.target.value; renderAlteracoes(getFilteredData()); });
