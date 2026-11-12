@@ -119,6 +119,9 @@
   table{width:100%;border-collapse:collapse;font-size:12.6px;}
   th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--borda);vertical-align:top;}
   th{color:var(--texto-suave);font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;position:sticky;top:0;background:#fff;z-index:1;}
+  th.sortable{cursor:pointer;user-select:none;}
+  th.sortable:hover{color:#1F2A44;}
+  .sort-ind{margin-left:4px;font-size:9px;}
   tr:hover td{background:#F7F9FD;}
   .table-wrap{max-height:560px;overflow:auto;border:1px solid var(--borda);border-radius:10px;}
 
@@ -759,6 +762,8 @@ const FIELD_LABELS={sistema:'Sistema',modulo:'Módulo',classificacao:'Classifica
   situacao:'Situação',solicitante:'Solicitante',prioridade:'Prioridade',sla:'Prazo',alerta:'Alerta',pendencia:'Pendência',temAlteracao:'Alterações',vencidaOrig:'Vencidas que o SISCON adiou',vencidaSiscon:'Vencidas no SISCON',vencidaTotal:'Vencidas (somadas)',classMudou:'Classificação',prioMudou:'Prioridade (alterada)',prazoMudou:'Prazo alterado'};
 let filters={}; FIELDS.forEach(f=>filters[f]=new Set());
 let dateFrom=null, dateTo=null; // filtro de período (data de inclusão), formato YYYY-MM-DD
+let prazoFrom=null, prazoTo=null; // filtro de período do prazo (prazo inicial)
+let altFrom=null, altTo=null;     // filtro de período da data da alteração (histórico)
 let filtersOpen=false;
 
 function uniqueValues(field){
@@ -775,15 +780,21 @@ function toggleFilter(field,value){
   renderAll();
 }
 function setDateRange(from,to){ dateFrom=from||null; dateTo=to||null; renderAll(); }
+function setPrazoRange(from,to){ prazoFrom=from||null; prazoTo=to||null; renderAll(); }
+function setAltRange(from,to){ altFrom=from||null; altTo=to||null; renderAll(); }
 function countActiveFilters(){
   let n=FIELDS.reduce((a,f)=>a+filters[f].size,0);
   if(dateFrom) n++;
   if(dateTo) n++;
+  if(prazoFrom) n++;
+  if(prazoTo) n++;
+  if(altFrom) n++;
+  if(altTo) n++;
   return n;
 }
 function clearFilters(){
   FIELDS.forEach(f=>filters[f].clear());
-  dateFrom=null; dateTo=null;
+  dateFrom=null; dateTo=null; prazoFrom=null; prazoTo=null; altFrom=null; altTo=null;
   renderAll();
 }
 function getFilteredData(){
@@ -791,6 +802,12 @@ function getFilteredData(){
     if(!FIELDS.every(f=>filters[f].size===0||filters[f].has(d[f]))) return false;
     if(dateFrom && (!d.dataInclusao || d.dataInclusao<dateFrom)) return false;
     if(dateTo && (!d.dataInclusao || d.dataInclusao>dateTo)) return false;
+    if(prazoFrom && (!d.prazo || d.prazo<prazoFrom)) return false;
+    if(prazoTo && (!d.prazo || d.prazo>prazoTo)) return false;
+    if(altFrom||altTo){
+      const dias=(d.mudancas||[]).map(e=>e.em.slice(0,10));
+      if(!dias.some(x=>(!altFrom||x>=altFrom)&&(!altTo||x<=altTo))) return false;
+    }
     return true;
   });
 }
@@ -871,6 +888,15 @@ function buildFilterPanel(){
       chip.appendChild(x);
       summary.appendChild(chip);
     }
+    [['Prazo',prazoFrom,prazoTo,()=>setPrazoRange(null,null)],['Alteração',altFrom,altTo,()=>setAltRange(null,null)]].forEach(([nome,de,ate,limpar])=>{
+      if(!de&&!ate) return;
+      const chip=document.createElement('span'); chip.className='mini-chip';
+      chip.innerHTML=nome+': '+(de?fmtDate(de):'início')+' – '+(ate?fmtDate(ate):'hoje');
+      const x=document.createElement('button'); x.textContent='✕'; x.title='Remover filtro de '+nome.toLowerCase();
+      x.onclick=limpar;
+      chip.appendChild(x);
+      summary.appendChild(chip);
+    });
   }
   left.appendChild(summary);
   head.appendChild(left);
@@ -899,6 +925,20 @@ function buildFilterPanel(){
     </label>`;
   gPeriodo.appendChild(wrapDatas);
   body.appendChild(gPeriodo);
+  const grupoData=(titulo,de,ate,aplicar)=>{
+    const g=document.createElement('div'); g.className='filter-group';
+    g.innerHTML=`<h4>${titulo}</h4>`;
+    const w=document.createElement('div'); w.style.cssText='display:flex;flex-direction:column;gap:6px;';
+    const est='width:100%;margin-top:2px;padding:5px 7px;border:1px solid var(--borda);border-radius:7px;font-size:12.5px;';
+    w.innerHTML=`<label style="font-size:11px;color:var(--texto-suave);">De <input type="date" class="d-de" style="${est}"></label>
+      <label style="font-size:11px;color:var(--texto-suave);">Até <input type="date" class="d-ate" style="${est}"></label>`;
+    const i1=w.querySelector('.d-de'), i2=w.querySelector('.d-ate');
+    i1.value=de||''; i2.value=ate||'';
+    i1.onchange=()=>aplicar(i1.value,i2.value); i2.onchange=()=>aplicar(i1.value,i2.value);
+    g.appendChild(w); return g;
+  };
+  body.appendChild(grupoData('Período (prazo)',prazoFrom,prazoTo,setPrazoRange));
+  if(HIST) body.appendChild(grupoData('Período (alteração)',altFrom,altTo,setAltRange));
 
   FIELDS.forEach(field=>{
     if(QUICK_FIELDS.includes(field)) return;
@@ -1243,6 +1283,61 @@ function fillTable(id,head,rows,colspan){
   document.querySelector('#'+id+' thead').innerHTML=head;
   document.querySelector('#'+id+' tbody').innerHTML =
     rows||`<tr><td colspan="${colspan}" class="empty-state">Nenhum dado para os filtros selecionados</td></tr>`;
+  tornarOrdenavel(id);
+}
+
+// ---- ordenação por clique no título da coluna: 1º clique crescente, 2º decrescente, 3º volta à ordem original
+const ORDENACAO={}; // id da tabela -> {col, dir}
+const RE_DATA=/^(\d{2})\/(\d{2})\/(\d{4})(?:[ ,]+(\d{2}):(\d{2}))?/;
+const RE_TITULO_DATA=/prazo|abertura|data|quando|vistos?\b|^em$/i;
+function tornarOrdenavel(id){
+  const tbl=document.getElementById(id); if(!tbl) return;
+  const ths=[...tbl.querySelectorAll('thead th')];
+  const tbody=tbl.querySelector('tbody');
+  const linhas=[...tbody.querySelectorAll('tr')];
+  if(!ths.length||!linhas.length||linhas[0].children.length!==ths.length) return;
+  linhas.forEach((r,i)=>{ if(r.dataset.ord===undefined) r.dataset.ord=i; }); // guarda a ordem original
+  const txt=(r,c)=>(r.children[c].textContent||'').trim();
+  const tipos=ths.map((th,c)=>{
+    const vals=linhas.map(r=>txt(r,c)).filter(v=>v&&v!=='—');
+    if(!vals.length) return 'texto';
+    const nd=vals.filter(v=>RE_DATA.test(v)).length;
+    const titulo=th.textContent.replace(/[▲▼]/g,'').trim();
+    if(nd>=1&&(nd>=vals.length*0.5||(RE_TITULO_DATA.test(titulo)&&!/status/i.test(titulo)))) return 'data';
+    const nn=vals.filter(v=>/^-?\d+([.,]\d+)?(\s|%|d\b|$)/.test(v)).length;
+    if(nn>=vals.length*0.8) return 'numero';
+    return 'texto';
+  });
+  const chave=(r,c)=>{
+    const v=txt(r,c); if(!v||v==='—') return null;
+    if(tipos[c]==='data'){ const m=v.match(RE_DATA); return m?Date.UTC(+m[3],+m[2]-1,+m[1],+(m[4]||0),+(m[5]||0)):null; }
+    if(tipos[c]==='numero'){ const n=parseFloat(v.replace(',','.')); return isNaN(n)?null:n; }
+    return v;
+  };
+  const est=ORDENACAO[id];
+  if(est&&est.col<ths.length){
+    const ordenadas=linhas.map(r=>({r,k:chave(r,est.col)}));
+    ordenadas.sort((a,b)=>{
+      if(a.k===null&&b.k===null) return a.r.dataset.ord-b.r.dataset.ord;
+      if(a.k===null) return 1; if(b.k===null) return -1; // vazios sempre no fim
+      let x=typeof a.k==='string'?a.k.localeCompare(b.k,'pt-BR',{numeric:true,sensitivity:'base'}):a.k-b.k;
+      if(x===0) return a.r.dataset.ord-b.r.dataset.ord;
+      return est.dir==='asc'?x:-x;
+    });
+    ordenadas.forEach(o=>tbody.appendChild(o.r));
+  }
+  ths.forEach((th,c)=>{
+    th.querySelectorAll('.sort-ind').forEach(x=>x.remove());
+    th.classList.add('sortable'); th.title='Clique para ordenar';
+    if(est&&est.col===c){ const i=document.createElement('span'); i.className='sort-ind'; i.textContent=est.dir==='asc'?'▲':'▼'; th.appendChild(i); }
+    th.onclick=()=>{
+      const a=ORDENACAO[id];
+      if(!a||a.col!==c) ORDENACAO[id]={col:c,dir:'asc'};
+      else if(a.dir==='asc') ORDENACAO[id]={col:c,dir:'desc'};
+      else delete ORDENACAO[id];
+      tornarOrdenavel(id);
+    };
+  });
 }
 
 function renderTables(data){
@@ -1455,6 +1550,8 @@ function exportTableImage(tableId,titulo,slug,extra,compacto){
   const nLinhas=tbl.querySelectorAll('tbody tr').length;
   const filtros=[]; FIELDS.forEach(f=>filters[f].forEach(v=>filtros.push(v)));
   if(dateFrom||dateTo) filtros.push('Período: '+(dateFrom?fmtDate(dateFrom):'início')+' – '+(dateTo?fmtDate(dateTo):'hoje'));
+  if(prazoFrom||prazoTo) filtros.push('Prazo: '+(prazoFrom?fmtDate(prazoFrom):'início')+' – '+(prazoTo?fmtDate(prazoTo):'hoje'));
+  if(altFrom||altTo) filtros.push('Alteração: '+(altFrom?fmtDate(altFrom):'início')+' – '+(altTo?fmtDate(altTo):'hoje'));
   if(extra) filtros.push(extra);
   const hoje=new Date();
   // cada imagem tem o formato de uma folha A4 deitada, para imprimir sem encolher
@@ -1473,6 +1570,7 @@ function exportTableImage(tableId,titulo,slug,extra,compacto){
   const clonar=()=>{
     const c=tbl.cloneNode(true);
     c.removeAttribute('id');
+    c.querySelectorAll('.sort-ind').forEach(x=>x.remove());
     c.querySelectorAll('th').forEach(th=>{ th.style.position='static'; });
     c.style.width='100%'; c.style.minWidth='0';
     if(compacto){
