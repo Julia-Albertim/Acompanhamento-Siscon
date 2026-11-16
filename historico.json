@@ -34,7 +34,8 @@
 {"em":"2026-11-09T15:57:16-03:00","rotulo":"Solicitacoes.xlsx","total":204,"hash":"30276fe68045"},
 {"em":"2026-11-13T10:51:44-03:00","rotulo":"Solicitacoes.xlsx","total":209,"hash":"d6bd3a3a6535"},
 {"em":"2026-11-13T14:29:46-03:00","rotulo":"Solicitacoes.xlsx","total":211,"hash":"1fe5144d766c"},
-{"em":"2026-11-16T10:00:43-03:00","rotulo":"Solicitacoes.xlsx","total":214,"hash":"9c3a0e37523d"}
+{"em":"2026-11-16T10:00:43-03:00","rotulo":"Solicitacoes.xlsx","total":214,"hash":"9c3a0e37523d"},
+{"em":"2026-11-16T11:08:01-03:00","rotulo":"Solicitacoes.xlsx","total":215,"hash":"8b7a3ce7d432"}
 ],
 "chamados":{
 "2436707":{"resumo":"[CRIAÇÃO DE BASE PARA CLIENTE COMPESAPREV OCI265 - SAUDE 10.220.0.38","sistema":"AG","original":{"prazo":"2025-06-27 17:30","classificacao":"CONFIGURAÇÃO","prioridade":"3","modulo":"ADM","sistema":"AG","situacao":"Liberado para cliente","vistoEm":"2026-09-21T09:48:00-03:00"},"atual":{"prazo":"2025-06-27 17:30","classificacao":"CONFIGURAÇÃO","prioridade":"3","modulo":"ADM","sistema":"AG","situacao":"Liberado para cliente"}},
@@ -251,7 +252,8 @@
 "2639534":{"resumo":"Geração de arquivos no layout Actuarial – Estudo Atuarial 2027","sistema":"AG","original":{"prazo":"2026-11-19 10:56","classificacao":"HELPDESK - CUIDAR","prioridade":"3","modulo":"Diversos","sistema":"AG","situacao":"Pendente","vistoEm":"2026-11-13T14:29:46-03:00"},"atual":{"prazo":"2026-11-19 10:56","classificacao":"HELPDESK - CUIDAR","prioridade":"3","modulo":"Diversos","sistema":"AG","situacao":"Pendente"}},
 "2639861":{"resumo":"Erro 500 ao pesquisar no Histórico de Autorizações do Painel de Regulação","sistema":"Plataforma Lean","original":{"prazo":"2026-11-18 08:12","classificacao":"HELPDESK - CUIDAR","prioridade":"4","modulo":"Regulação Médica","sistema":"Plataforma Lean","situacao":"Pendente","vistoEm":"2026-11-16T10:00:43-03:00"},"atual":{"prazo":"2026-11-18 08:12","classificacao":"HELPDESK - CUIDAR","prioridade":"4","modulo":"Regulação Médica","sistema":"Plataforma Lean","situacao":"Pendente"}},
 "2639887":{"resumo":"App – Erro no servidor","sistema":"PORTAL","original":{"prazo":"2026-11-18 08:34","classificacao":"CORRECAO","prioridade":"5","modulo":"ADM","sistema":"PORTAL","situacao":"Pendente","vistoEm":"2026-11-16T10:00:43-03:00"},"atual":{"prazo":"2026-11-18 08:34","classificacao":"CORRECAO","prioridade":"5","modulo":"ADM","sistema":"PORTAL","situacao":"Pendente"}},
-"2639924":{"resumo":"Benner AG – Acesso ao SQL parou novamente (erro 401 Unauthorized)","sistema":"AG","original":{"prazo":"2026-11-18 08:56","classificacao":"CORRECAO","prioridade":"4","modulo":"ADM","sistema":"AG","situacao":"Pendente","vistoEm":"2026-11-16T10:00:43-03:00"},"atual":{"prazo":"2026-11-18 08:56","classificacao":"CORRECAO","prioridade":"4","modulo":"ADM","sistema":"AG","situacao":"Pendente"}}
+"2639924":{"resumo":"Benner AG – Acesso ao SQL parou novamente (erro 401 Unauthorized)","sistema":"AG","original":{"prazo":"2026-11-18 08:56","classificacao":"CORRECAO","prioridade":"4","modulo":"ADM","sistema":"AG","situacao":"Pendente","vistoEm":"2026-11-16T10:00:43-03:00"},"atual":{"prazo":"2026-11-18 08:56","classificacao":"CORRECAO","prioridade":"4","modulo":"ADM","sistema":"AG","situacao":"Pendente"}},
+"2639957":{"resumo":"Benner AG – E-mails de “Solicitação de Nota Fiscal” não estão sendo enviados (status Com erro)","sistema":"AG","original":{"prazo":"2026-11-23 08:33","classificacao":"CORRECAO","prioridade":"3","modulo":"Agendamentos","sistema":"AG","situacao":"Pendente","vistoEm":"2026-11-16T11:08:01-03:00"},"atual":{"prazo":"2026-11-23 08:33","classificacao":"CORRECAO","prioridade":"3","modulo":"Agendamentos","sistema":"AG","situacao":"Pendente"}}
 },
 "eventos":[
 {"em":"2026-09-22T09:14:00-03:00","protocolo":"2615970","campo":"classificacao","antes":"CORRECAO","depois":"HELPDESK - CUIDAR","situacaoAntes":"Pendente","situacaoDepois":"Pendente"},
