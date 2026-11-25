@@ -141,6 +141,18 @@
   .empty-state{padding:40px;text-align:center;color:var(--texto-suave);font-size:13.5px;}
   footer{padding:20px 30px 40px;color:var(--texto-suave);font-size:11.5px;text-align:center;}
   .tab-panel{display:none;} .tab-panel.active{display:block;}
+  .fluxo-card{margin-bottom:15px;}
+  .fluxo-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;}
+  .fluxo-ctrls{display:flex;gap:14px;flex-wrap:wrap;}
+  .fluxo-ctrls .chip-row{max-height:none;overflow:visible;}
+  .fluxo-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:6px 0 14px;}
+  .fluxo-kpis .fk{background:#F7F9FD;border-radius:10px;padding:10px 12px;border-left:4px solid var(--azul);}
+  .fluxo-kpis .fk .n{font-size:20px;font-weight:700;color:var(--azul-escuro);}
+  .fluxo-kpis .fk .l{font-size:11px;color:var(--texto-suave);margin-top:2px;}
+  .fluxo-kpis .fk.ab{border-left-color:var(--azul);} .fluxo-kpis .fk.re{border-left-color:var(--verde);}
+  .fluxo-kpis .fk.pos{border-left-color:var(--vermelho);} .fluxo-kpis .fk.neg{border-left-color:var(--verde);}
+  .fluxo-card canvas{max-height:300px;}
+  .fluxo-nota{margin-top:8px;font-style:italic;}
   .quick-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 18px 0;}
   .quick-bar .qlabel{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--texto-suave);font-weight:700;margin-right:2px;}
   .qchip{display:inline-flex;align-items:center;gap:7px;padding:6px 13px;border-radius:20px;border:1.5px solid var(--borda);
@@ -244,6 +256,25 @@
         <p class="hint">Tipo de demanda registrada no SISCON</p>
         <canvas id="chClassificacao"></canvas>
       </div>
+    </div>
+    <div class="card fluxo-card">
+      <div class="fluxo-head">
+        <div>
+          <h3>Abertos x Resolvidos</h3>
+          <p class="hint">Quantos chamados entram e quantos saem a cada dia, semana ou mês. Respeita os filtros ativos.</p>
+        </div>
+        <div class="fluxo-ctrls">
+          <div class="chip-row" id="fluxoGran">
+            <span class="chip active" data-v="dia">Dia</span><span class="chip" data-v="semana">Semana</span><span class="chip" data-v="mes">Mês</span>
+          </div>
+          <div class="chip-row" id="fluxoPer">
+            <span class="chip" data-v="30">30 dias</span><span class="chip active" data-v="90">90 dias</span><span class="chip" data-v="0">Tudo</span>
+          </div>
+        </div>
+      </div>
+      <div class="fluxo-kpis" id="fluxoKpis"></div>
+      <canvas id="chFluxo"></canvas>
+      <p class="hint fluxo-nota">Abertos = Data de inclusão. Resolvidos = Última Alteração dos chamados concluídos (Liberado para cliente, Resolvido ou Faturado). A planilha não traz a data exata de conclusão, então esse dia é aproximado. Médias por dia útil (seg a sex).</p>
     </div>
     <div class="grid c2">
       <div class="card">
@@ -1674,11 +1705,91 @@ function exportTableImage(tableId,titulo,slug,extra,compacto){
 }
 
 // ============ render ============
+// ============ abertos x resolvidos (fluxo) ============
+let FLUXO_GRAN='dia', FLUXO_PER=90, FLUXO_DATA=[];
+function isoDia(s){ return s?new Date(s+'T00:00:00'):null; }
+function inicioSemana(d){ const x=new Date(d); const w=(x.getDay()+6)%7; x.setDate(x.getDate()-w); return x; }
+function renderFluxo(data){
+  FLUXO_DATA=data;
+  const fim=new Date(HOJE);
+  let ini;
+  if(FLUXO_PER>0){ ini=new Date(fim); ini.setDate(ini.getDate()-FLUXO_PER+1); }
+  else{
+    const ds=data.map(d=>d.dataInclusao).filter(Boolean).sort();
+    ini=ds.length?isoDia(ds[0]):new Date(fim);
+  }
+  const dentro=dt=>dt&&dt>=ini&&dt<=fim;
+  const abertosDia={}, resolvDia={};
+  let totAb=0, totRe=0;
+  for(const d of data){
+    if(d.dataInclusao){ abertosDia[d.dataInclusao]=(abertosDia[d.dataInclusao]||0)+1; if(dentro(isoDia(d.dataInclusao))) totAb++; }
+    if(d.grupo==='Concluído' && d.ultimaAlteracao){
+      resolvDia[d.ultimaAlteracao]=(resolvDia[d.ultimaAlteracao]||0)+1; if(dentro(isoDia(d.ultimaAlteracao))) totRe++;
+    }
+  }
+  // dias do período
+  // gráfico começa no início da semana/mês para não mostrar a primeira barra cortada
+  const iniGraf = FLUXO_GRAN==='semana' ? inicioSemana(ini) : (FLUXO_GRAN==='mes' ? new Date(ini.getFullYear(),ini.getMonth(),1) : new Date(ini));
+  const dias=[]; let diasUteis=0;
+  for(let x=new Date(iniGraf); x<=fim; x.setDate(x.getDate()+1)){
+    const k=ymd(x), util=x.getDay()>0&&x.getDay()<6;
+    if(util && x>=ini) diasUteis++;
+    dias.push({k,dt:new Date(x),util});
+  }
+  // agrupa
+  const buckets=new Map();
+  for(const dd of dias){
+    let key,label;
+    if(FLUXO_GRAN==='dia'){
+      if(!dd.util && !abertosDia[dd.k] && !resolvDia[dd.k]) continue; // pula fim de semana vazio
+      key=dd.k; label=dd.dt.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+    }else if(FLUXO_GRAN==='semana'){
+      const s=inicioSemana(dd.dt); key=ymd(s);
+      label='sem. '+s.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+    }else{ key=ym(dd.dt); label=fmtMes(key); }
+    if(!buckets.has(key)) buckets.set(key,{label,ab:0,re:0});
+    const b=buckets.get(key); b.ab+=abertosDia[dd.k]||0; b.re+=resolvDia[dd.k]||0;
+  }
+  const arr=[...buckets.values()];
+  const saldo=totAb-totRe;
+  const mAb=diasUteis?(totAb/diasUteis):0, mRe=diasUteis?(totRe/diasUteis):0;
+  const f1=v=>v.toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1});
+  const per=FLUXO_PER>0?('últimos '+FLUXO_PER+' dias'):'todo o período';
+  document.getElementById('fluxoKpis').innerHTML=
+    `<div class="fk ab"><div class="n">${totAb}</div><div class="l">Abertos (${per})</div></div>`+
+    `<div class="fk re"><div class="n">${totRe}</div><div class="l">Resolvidos (${per})</div></div>`+
+    `<div class="fk ab"><div class="n">${f1(mAb)}</div><div class="l">Abertos por dia útil</div></div>`+
+    `<div class="fk re"><div class="n">${f1(mRe)}</div><div class="l">Resolvidos por dia útil</div></div>`+
+    `<div class="fk ${saldo>0?'pos':'neg'}"><div class="n">${saldo>0?'+':''}${saldo}</div><div class="l">${saldo>0?'Fila cresceu (abriu mais que resolveu)':(saldo<0?'Fila diminuiu (resolveu mais que abriu)':'Fila estável')}</div></div>`;
+  const tipo=FLUXO_GRAN==='dia'?'line':'bar';
+  drawChart('fluxo','chFluxo',{type:tipo,
+    data:{labels:arr.map(b=>b.label),datasets:[
+      {label:'Abertos',data:arr.map(b=>b.ab),borderColor:COLORS.azul,backgroundColor:tipo==='line'?'rgba(47,74,151,.10)':COLORS.azul,
+       tension:.25,pointRadius:tipo==='line'?2.5:0,borderRadius:4,maxBarThickness:28},
+      {label:'Resolvidos',data:arr.map(b=>b.re),borderColor:COLORS.verde,backgroundColor:tipo==='line'?'rgba(143,199,74,.12)':COLORS.verde,
+       tension:.25,pointRadius:tipo==='line'?2.5:0,borderRadius:4,maxBarThickness:28}]},
+    options:{interaction:{mode:'index',intersect:false},
+      plugins:{legend:{position:'bottom',labels:{boxWidth:12,padding:10}},
+        tooltip:{callbacks:{footer:items=>{const a=items[0]?items[0].parsed.y:0,r=items[1]?items[1].parsed.y:0,s=a-r;return 'Saldo: '+(s>0?'+':'')+s;}}}},
+      scales:{y:{beginAtZero:true,ticks:{precision:0}},x:{ticks:{maxRotation:0,autoSkip:true,maxTicksLimit:16}}}}});
+}
+function bindFluxoChips(id,setter){
+  const row=document.getElementById(id); if(!row) return;
+  row.addEventListener('click',e=>{
+    const c=e.target.closest('.chip'); if(!c) return;
+    row.querySelectorAll('.chip').forEach(x=>x.classList.toggle('active',x===c));
+    setter(c.dataset.v); renderFluxo(FLUXO_DATA);
+  });
+}
+bindFluxoChips('fluxoGran',v=>{FLUXO_GRAN=v;});
+bindFluxoChips('fluxoPer',v=>{FLUXO_PER=+v;});
+
 function renderAll(){
   buildFilterPanel();
   const data=getFilteredData();
   renderKpis(data);
   renderCharts(data);
+  renderFluxo(data);
   renderTables(data);
   renderPendencias(data);
   renderAlteracoes(data);

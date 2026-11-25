@@ -22,8 +22,8 @@ if errorlevel 1 (
 )
 echo.
 echo [2/2] Enviando para o GitHub...
-git add Solicitacoes.xlsx historico.json
-git commit -m "Atualizacao dos chamados e do historico"
+git add -A
+git commit -m "Atualizacao do painel"
 if errorlevel 1 (
     echo       (nada novo para enviar)
 ) else (
